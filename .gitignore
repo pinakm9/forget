@@ -1,2 +1,4 @@
 data/MNIST/raw/*
 notebooks/data/*
+data/*
+*.DS_Store
