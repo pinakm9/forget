@@ -189,7 +189,7 @@ class LoRA_VAE_Decoder(nn.Module):
         # --- Encoder ---
         # Keep the encoder intact (without LoRA modifications).
         self.encoder = frozen_vae.encoder
-        self.enc_mu = frozen_vae.enc_mu
+        self.enc_mu = frozen_vae.enc_mu 
         self.enc_log_sigma = frozen_vae.enc_log_sigma
 
         # --- Decoder ---

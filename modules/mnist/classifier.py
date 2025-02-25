@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 import tqdm
 import sys, os
 import torch.nn.functional as F
+from scipy.linalg import sqrtm
+import numpy as np
 
 
 # Add the 'modules' directory to the Python search path
@@ -19,78 +21,91 @@ import datapipe
 class MNISTClassifier(nn.Module):
     def __init__(self):
         super(MNISTClassifier, self).__init__()
-        self.fc1 = nn.Linear(28 * 28, 512)
+        self.fc1 = nn.Linear(28 * 28, 200)
+        # self.bn1   = nn.BatchNorm1d(200)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(512, 10)
+        # self.dropout = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(200, 10)
         
     def forward(self, x):
         # Flatten the input tensor (N, 1, 28, 28) to (N, 784)
         x = x.view(x.size(0), -1)
         x = self.fc1(x)
+        # x = self.bn1(x)
         x = self.relu(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.fc2(x)
         return x
 
 
-class MNISTClassifierConv(nn.Module):
+
+class EfficientMNISTClassifier(nn.Module):
     def __init__(self):
-        super(MNISTClassifierConv, self).__init__()
-        # Convolutional Layers
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1)  # 28x28 -> 28x28
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1) # 28x28 -> 28x28
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)  # 28x28 -> 14x14
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1) # 14x14 -> 14x14
-        self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1) # 14x14 -> 14x14
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)  # 14x14 -> 7x7
+        super(EfficientMNISTClassifier, self).__init__()
+        # Convolutional layers with Batch Normalization.
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)    # (32, 28, 28)
+        self.bn1   = nn.BatchNorm2d(32)
         
-        # Fully Connected Layers
-        self.fc1 = nn.Linear(256 * 7 * 7, 512)
-        self.dropout = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(512, 10)
-
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)    # (64, 28, 28)
+        self.bn2   = nn.BatchNorm2d(64)
+        
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)   # (128, 28, 28)
+        self.bn3   = nn.BatchNorm2d(128)
+        
+        self.pool  = nn.MaxPool2d(2, 2)  # Reduces spatial dimensions to 14x14.
+        
+        # 1x1 convolution to expand channels.
+        self.conv4 = nn.Conv2d(128, 200, kernel_size=1)             # (200, 14, 14)
+        self.bn4   = nn.BatchNorm2d(200)
+        
+        # Fully connected layers.
+        # After global average pooling, we have 200 features.
+        self.fc1 = nn.Linear(200, 148)
+        self.dropout = nn.Dropout(0.3)  # Moderate dropout to improve generalization.
+        self.fc2 = nn.Linear(148, 10)
+        
     def forward(self, x):
-        # Convolutional feature extraction
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = self.pool(x)
-
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
-        x = self.pool2(x)
-
-        # Flatten for Fully Connected Layers
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)  # No Softmax because CrossEntropyLoss handles it
+        x = F.relu(self.bn1(self.conv1(x)))  # (batch, 32, 28, 28)
+        x = F.relu(self.bn2(self.conv2(x)))  # (batch, 64, 28, 28)
+        x = F.relu(self.bn3(self.conv3(x)))  # (batch, 128, 28, 28)
+        x = self.pool(x)                     # (batch, 128, 14, 14)
+        x = F.relu(self.bn4(self.conv4(x)))  # (batch, 200, 14, 14)
+        x = F.adaptive_avg_pool2d(x, (1, 1))   # Global average pooling → (batch, 200, 1, 1)
+        x = x.view(x.size(0), -1)              # Flatten to (batch, 200)
+        x = F.relu(self.fc1(x))                # (batch, 148)
+        x = self.dropout(x)                    # Apply dropout
+        x = self.fc2(x)                        # (batch, 10)
         return x
+    
 
 
-def train(folder, num_epochs, batch_size):
+
+
+
+def train(folder, architecture, num_epochs, batch_size, all_digits=None):
     # Create DataLoaders for the training and test sets.
-    train_loader = datapipe.MNIST().get_dataloader(batch_size=batch_size, train=True)
-    test_loader  = datapipe.MNIST().get_dataloader(batch_size=batch_size, train=False)
+    train_loader = datapipe.MNIST().get_dataloader(batch_size=batch_size, train=True, all_digits=all_digits)
+    test_loader  = datapipe.MNIST().get_dataloader(batch_size=batch_size, train=False, all_digits=all_digits)
 
-    checkpoint_dir = f"{folder}/checkpoints"
-    ut.makedirs(checkpoint_dir)
+    ut.makedirs(folder)
     
     # Instantiate the model.
-    model = MNISTClassifier()
+    model = architecture()
 
     # Move the model to GPU (or MPS) if available.
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+    device = ut.get_device()
     model.to(device)
+    model.train()
 
     # Define the optimizer and loss function.
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
     # Wrap the epoch loop with tqdm.
+
     epoch_iter = tqdm.tqdm(range(num_epochs), desc="Epochs", unit="epoch")
     for epoch in epoch_iter:
-        model.train()
+        
         running_loss = 0.0
 
         for batch_idx, (data, target) in enumerate(train_loader):
@@ -122,7 +137,7 @@ def train(folder, num_epochs, batch_size):
         epoch_iter.set_postfix(loss=f"{avg_loss:.4f}", test_acc=f"{test_acc:.2f}%")
     
     # Save the final model's state_dict.
-    torch.save(model.state_dict(), f"{checkpoint_dir}/classifier.pth")
+    torch.save(model, f"{folder}/{architecture.__name__}.pth")
 
 
 # @ut.timer
@@ -141,9 +156,8 @@ def count_digit(images, digit, model="../data/MNIST/classifier/checkpoints/class
         int: The number of images that are classified as the specified digit.
     """
     if isinstance(model, str):
-        state_dict = torch.load(model)
-        model = MNISTClassifier().to(device)
-        model.load_state_dict(state_dict)
+        model = torch.load(model)
+        model.to(device)
     # Set the model to evaluation mode.
     model.eval()
     # Move the images to the specified device.
@@ -176,8 +190,7 @@ def get_classifier(path="../data/MNIST/classifier/checkpoints/classifier.pth", d
     Returns:
         MNISTClassifier: An instance of MNISTClassifier with the pre-trained weights.
     """
-    model = MNISTClassifier()
-    model.load_state_dict(torch.load(path))
+    model = torch.load(path)
     model.to(device)
     model.eval()
     return model
@@ -194,7 +207,7 @@ def count_from_logits(logits):
             - The bincount of the argmax of the logits, of shape (num_classes,).
             - The top 2 elements of the softmax of the logits, of shape (batch_size, 2).
     """
-    return torch.bincount(torch.argmax(logits, dim=1))
+    return torch.bincount(torch.argmax(logits, dim=1), minlength=10)
 
 
 def entropy(probs):
@@ -218,5 +231,72 @@ def ambiguity(logits, weight_entropy=0.5, weight_margin=0.5):
     margin_scores = (margin_scores - margin_scores.min()) / (margin_scores.max() - margin_scores.min() + 1e-9)
     
     # Weighted combination
-    combined_score = weight_entropy * entropy_scores + weight_margin * margin_scores
-    return entropy_scores, margin_scores, combined_score
+    # combined_score = weight_entropy * entropy_scores + weight_margin * margin_scores
+    return entropy_scores, margin_scores#, combined_score
+
+
+def compute_features(images, identifier):
+    """
+    Extract features from a list of images using the identifier's intermediate layer.
+    The identifier is expected to have a method `get_features` that returns the penultimate features.
+    """
+    images = images.view(images.size(0), -1)
+    features = torch.relu(F.linear(images.cpu(), identifier.fc1.weight.cpu(), identifier.fc1.bias.cpu()))
+    return features.detach().numpy()
+
+
+def frechet_inception_distance(real_images, gen_images, identifier):
+    """
+    Computes the Frechet Inception Distance (FID) between two sets of images using NumPy.
+    
+    FID is computed as the squared difference between the mean feature vectors of the two sets,
+    plus the trace of the sum of the covariance matrices minus twice the matrix square root 
+    of their product.
+    
+    Parameters
+    ----------
+    real_images : array-like
+        Real images.
+    gen_images : array-like
+        gen images.
+    identifier : callable
+        A function or network that computes features from images. It should accept an image (or batch)
+        and return a NumPy array of features.
+        
+    Returns
+    -------
+    fid : float
+        The FID between the real and gen images.
+    """
+    # Extract features from real and gen images
+    real_features = compute_features(real_images, identifier)  # shape: (N, D)
+    gen_features = compute_features(gen_images, identifier) # shape: (M, D)
+    
+    
+
+    mu_real, sigma_real = real_features.mean(axis=0), np.cov(real_features, rowvar=False)
+    mu_gen, sigma_gen = gen_features.mean(axis=0), np.cov(gen_features, rowvar=False)
+
+    cov_sqrt = sqrtm(sigma_real @ sigma_gen)
+
+    if np.iscomplexobj(cov_sqrt):
+        cov_sqrt = cov_sqrt.real
+
+    # Compute FID score
+    fid = np.sum((mu_real - mu_gen) ** 2) + np.trace(sigma_real + sigma_gen - 2 * cov_sqrt)
+    return fid
+
+#
+
+
+def inception_score(logits):
+    preds = F.softmax(logits, dim=1)
+    
+    # Compute the marginal distribution p(y)
+    py = torch.mean(preds, axis=0)
+    
+    # Compute the KL divergence for each image and average
+    kl_divs = torch.sum(preds * (torch.log(preds + 1e-9) - torch.log(py + 1e-9)), dim=1)
+    return torch.exp(kl_divs.mean())
+
+

@@ -1,4 +1,9 @@
 import torch
+import os, sys
+from torch.autograd import grad
+
+sys.path.append(os.path.abspath('../modules'))
+import utility as ut
 
 def kl_div(mu, logvar):
     """
@@ -39,29 +44,8 @@ def reconstruction_loss(input, output):
     return torch.nn.functional.binary_cross_entropy(input, output, reduction='sum') 
 
 
-def loss(input, output, mu, logvar, beta=1.):
-    """
-    Compute the total loss of the VAE, which is the sum of the reconstruction loss and the KL divergence loss.
-
-    Parameters
-    ----------
-    input : torch.Tensor
-        The input tensor.
-    output : torch.Tensor
-        The output tensor.
-    mu : torch.Tensor
-        The mean of the latent variables (shape: [batch_size, latent_dim]).
-    logvar : torch.Tensor
-        The log variance of the latent variables (shape: [batch_size, latent_dim]).
-    beta : float, optional
-        The weight of the KL divergence term in the loss. Default is 1.
-
-    Returns
-    -------
-    torch.Tensor
-        The total loss of the VAE.
-    """
-    return reconstruction_loss(input, output) + beta*kl_div(mu, logvar)
+def loss(input, output, mu, logvar, kl_weight=1.):
+    return reconstruction_loss(input, output) + kl_weight*kl_div(mu, logvar)
 
 
 
@@ -132,3 +116,84 @@ def mean_loss(input, output, mu, logvar, beta=1.):
         The total loss of the VAE.
     """
     return mean_reconstruction_loss(input, output) + beta*mean_kl_div(mu, logvar)
+
+
+
+def uniformity_loss(logits, digits):    
+    """
+    Compute the uniformity loss over the given logits.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        The input logits (shape: [batch_size, num_classes]).
+    digits : list of int
+        The list of digit classes to consider.
+
+    Returns
+    -------
+    float
+        The uniformity loss.
+    """
+    probs = torch.softmax(logits, dim=1).mean(dim=0)
+    mask = torch.zeros_like(probs)
+    mask[digits] = 1.
+    uniform_target = mask/len(digits)
+    return torch.sum(probs * torch.log((probs + 1e-8) / (uniform_target + 1e-8)))
+    
+
+
+
+def uniformity_loss_surgery(logits, all_digits=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], forget_digit=1):    
+    """
+    Compute the uniformity loss over the given logits, but forget forget digit.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        The input logits (shape: [batch_size, num_classes]).
+    all_digits : list of int, optional
+        The list of all digit classes to consider. Default is [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].
+    forget_digit : int, optional
+        The digit to forget (i.e., not to include in the uniformity loss). Default is 1.
+
+    Returns
+    -------
+    float
+        The uniformity loss.
+    """
+    probs = torch.softmax(logits, dim=1).mean(dim=0)
+    mask = torch.zeros_like(probs)
+    mask[all_digits] = 1.
+    mask[forget_digit] = 0.
+    uniform_target = mask/(len(all_digits) - 1)
+    return torch.sum(probs * torch.log((probs + 1e-8) / (uniform_target + 1e-8)))
+
+
+
+
+def orthogonality_loss(model, identifier, retain_sample, forget_sample, kl_weight, uniformity_weight, digits):
+    trainable_params = ut.get_trainable_params(model)
+
+    reconstructed_forget, mu_forget, logvar_forget = model(forget_sample)
+    reconstructed_retain, mu_retain, logvar_retain = model(retain_sample)
+
+    rec_forget = reconstruction_loss(reconstructed_forget, forget_sample)
+    rec_retain = reconstruction_loss(reconstructed_retain, retain_sample)
+    kl_forget = kl_div(mu_forget, logvar_forget)
+    kl_retain = kl_div(mu_retain, logvar_retain)
+
+    generated_img = model.decoder(torch.randn(retain_sample.shape[0], model.latent_dim).to(model.device))
+    logits = identifier(generated_img)
+    uniformity = uniformity_loss(logits, digits)
+
+    loss_forget = rec_forget + kl_weight * kl_forget + uniformity_weight * uniformity
+    loss_retain = rec_retain + kl_weight * kl_retain + uniformity_weight * uniformity
+
+    gf = torch.cat([x.view(-1) for x in grad(outputs=loss_forget, inputs=trainable_params, retain_graph=True)])
+    gr = torch.cat([x.view(-1) for x in grad(outputs=loss_retain, inputs=trainable_params)])
+
+    return (torch.sum(gf * gr)**2 / (torch.sum(gf * gf) * torch.sum(gr * gr)))
+
+
+   

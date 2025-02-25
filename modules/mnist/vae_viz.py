@@ -73,7 +73,7 @@ def generate_random_samples(model, num_samples=25, latent_dim=2):
     with torch.no_grad():
         generated_images = net.decoder(z_random)  # Shape: (num_samples, 784)
     
-    generated_images = generated_images.cpu().numpy().reshape(num_samples, 28, 28)
+    generated_array = generated_images.cpu().numpy().reshape(num_samples, 28, 28)
 
     # Define grid size for visualization
     grid_size = int(num_samples ** 0.5)  # Square grid if possible
@@ -83,10 +83,11 @@ def generate_random_samples(model, num_samples=25, latent_dim=2):
         for j in range(grid_size):
             img_idx = i * grid_size + j
             if img_idx < num_samples:
-                axes[i, j].imshow(generated_images[img_idx], cmap="gray")
+                axes[i, j].imshow(generated_array[img_idx], cmap="gray")
                 axes[i, j].axis("off")
 
     plt.show()
+    return generated_images
 
 
 
@@ -106,6 +107,8 @@ def evolve(model, folder, num_samples=25, fps=12, total_frames=100):
     checkpoints_dir = os.path.join(folder, "checkpoints")
     # Get sorted list of checkpoint files.
     pth_files = sorted(glob.glob(os.path.join(checkpoints_dir, "*.pth")))
+    if len(pth_files) < total_frames:
+        total_frames = len(pth_files) 
 
     # Ensure samples directory exists
     samples_dir = os.path.join(folder, "samples")
@@ -170,89 +173,69 @@ def evolve(model, folder, num_samples=25, fps=12, total_frames=100):
 
 
 
-@ut.timer
-def evolve_epoch(folder):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 12))
-    data = pd.read_csv(f"{folder}/checkpoints/training_log_epoch.csv")
 
-    # plot original loss vs epoch
-    axes[0, 0].semilogy(data["Epoch"], data["Reconstruction Loss"] + data["KL Loss"])
-    axes[0, 0].set_ylabel("Original Loss")
+def evolve(folder):
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    data = pd.read_csv(f"{folder}/checkpoints/training_log.csv")
+    config = ut.get_config(folder)
+    window = int(max(1, config["training"]["epoch_length"]["value"] / config["experiment"]["log_interval"]["value"]))
+
+    # plot Total Loss vs Step
+    axes[0, 0].semilogy(data["Step"], data["Total Loss"].rolling(window).mean())
+    axes[0, 0].set_ylabel("Total Loss")
 
 
-    # plot orthogonality loss vs epoch
+    # plot Orthogonality Loss vs Step
     try:
-        axes[0, 1].semilogy(data["Epoch"], data["Orthogonality Loss"])
+        axes[0, 1].semilogy(data["Step"], data["Orthogonality Loss"].rolling(window).mean())
         axes[0, 1].set_ylabel("Orthogonality Loss")
     except: 
         pass
-
+    
+    # plot Uniformity Loss vs Step
     try:
-        # plot fraction of 1s vs epoch
-        axes[1, 0].plot(data["epoch"], data["1 Fraction"])
-        axes[1, 0].set_ylabel("Fraction of 1s")
-        axes[1, 0].set_xlabel("epoch")
+        axes[0, 2].semilogy(data["Step"], data["Uniformity Loss"].rolling(window).mean())
+        axes[0, 2].set_ylabel("Uniformity Loss")
+    except: 
+        pass
+    
+    try:
+        # plot fraction of forget digit vs Step
+        forget_digit = config['experiment']['forget_digit']["value"]
+        axes[1, 0].plot(data["Step"], data[f"{forget_digit} Fraction"])
+        axes[1, 0].set_ylabel(f"Fraction of {forget_digit}s")
+        axes[1, 0].set_xlabel("Step")
     except:
         pass
 
     try:
-        # plot ambiguity 1s vs epoch
-        axes[1, 1].plot(data["epoch"], data["Ambiguity"])
-        axes[1, 1].set_ylabel("Ambiguity")
-        fig.supxlabel("Epoch")
+        # plot Margin vs Step
+        axes[1, 1].plot(data["Step"], data["Margin"])
+        axes[1, 1].set_ylabel("Margin")
     except:
         pass
 
-    plt.savefig(f"{folder}/evolution_epoch.png", bbox_inches="tight")
-
-
-@ut.timer
-def evolve_step(folder):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 12))
-    data = pd.read_csv(f"{folder}/checkpoints/training_log_step.csv")
-    with open(f"{folder}/config.json", 'r') as f:
-        config = json.load(f)
-
-    window_size = int(config["training"]["batch_size"]["value"] )
-    # print(window_size)
-    # plot original loss vs step
-    axes[0, 0].semilogy(data["Step"], data["Reconstruction Loss"].rolling(window=window_size).mean() +\
-                        config["training"]["kl_weight"]["value"] * data["KL Loss"].rolling(window=window_size).mean())
-    axes[0, 0].set_ylabel("Original Loss")
-
-
-    # plot orthogonality loss vs step
     try:
-        axes[0, 1].semilogy(data["Step"], data["Orthogonality Loss"].rolling(window=window_size).mean())
-        axes[0, 1].set_ylabel("Orthogonality Loss")
-    except: 
+        # plot quality vs Step
+        axes[1, 2].plot(data["Step"], data["FID"], label="FID")
+        axes[1, 2].plot(data["Step"], data["IS"], label="IS")
+        axes[1, 2].set_ylabel("Image Quality")
+        axes[1, 2].legend()
+    except:
         pass
 
-    # plot fraction of 1s vs step
-    axes[1, 0].plot(data["Step"], data["1 Fraction"].rolling(window=window_size).mean())
-    axes[1, 0].set_ylabel("Fraction of 1s")
-    axes[1, 0].set_xlabel("step")
 
-    # plot ambiguity 1s vs step
-    axes[1, 1].plot(data["Step"], data["Ambiguity"].rolling(window=window_size).mean())
-    axes[1, 1].set_ylabel("Ambiguity")
     fig.supxlabel("Step")
-
-    plt.savefig(f"{folder}/evolution_step.png", bbox_inches="tight")
+    plt.savefig(f"{folder}/evolution.png", bbox_inches="tight")
 
 
 @ut.timer
-def visualize(model, folder, num_samples_animation=169, num_samples_fraction_calculation=500, latent_dim=2, fps=12, total_frames=100):
-    try:
-        evolve_epoch(folder)
-    except:
-        pass
-    
-    evolve_step(folder)
-    
+def summarize_training(folder, total_duration=15):
+    evolve(folder)
+    config = ut.get_config(folder)
+    ut.stitch(f"{folder}/samples", config["experiment"]["img_ext"]["value"], f"{folder}/samples/sample_evolution.mp4", total_duration, delete_images=True)
 
-    try:
-        evolve(model, folder, num_samples_animation, fps, total_frames)
-    except:
-        pass
-      
+
+
+
+

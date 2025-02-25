@@ -10,7 +10,7 @@ class MNIST:
         super(MNIST, self).__init__()
 
 
-    def get_dataloader(self, batch_size, pad=False, root='../data', train=True):
+    def get_dataloader(self, batch_size, pad=False, root='../data', train=True, all_digits=list(range(10))):
         """
         Get a dataloader for the MNIST dataset.
 
@@ -40,15 +40,17 @@ class MNIST:
         
         dataset = datasets.MNIST(root = root, train = train, download = True, 
                         transform = transform)
-        dataloader = DataLoader(dataset = dataset, batch_size = batch_size, 
-                                shuffle = True)
-        return dataloader
+        if len(all_digits) < 10:
+            dataset = self.filter_mnist(dataset, all_digits)
+
+        return DataLoader(dataset = dataset, batch_size = batch_size, shuffle = True)
 
 
 
-    def get_dataloader_one_vs_rest(self, batch_size, pad=False, root='../data', train=True):
+    def get_dataloader_rf(self, batch_size, pad=False, root='../data', train=True, all_digits=list(range(10)), forget_digit=1):    
         """
-        Get two DataLoaders for the MNIST dataset, one for digit '1' and the other for the rest.
+        Get DataLoaders for an MNIST dataset that splits the data into two groups: 
+        one containing only the 'forget' digit and the other containing the remaining digits.
 
         Parameters
         ----------
@@ -60,12 +62,18 @@ class MNIST:
             The root directory of the dataset. Default is '../data'.
         train : bool, optional
             Whether to get the training set or the test set. Default is True.
+        all_digits : list of int, optional
+            The list of digit classes to consider. Default is all digits [0-9].
+        forget_digit : int, optional
+            The digit to separate from the rest. Default is 1.
 
         Returns
         -------
-        tuple of two DataLoaders
-            Two DataLoaders, the first one containing only digit '1' and the second one containing the rest.
+        tuple of DataLoader
+            A tuple containing two DataLoaders: the first for the 'forget' digit subset,
+            and the second for the 'retain' digits subset.
         """
+
         if pad:
             transform = transforms.Compose([
                     transforms.Pad(padding = 2, padding_mode = 'edge'),
@@ -76,18 +84,32 @@ class MNIST:
         
         dataset = datasets.MNIST(root = root, train = train, download = True, 
                         transform = transform)
-        # Get indices of digit '1' and the rest
-        one_indices = [i for i, label in enumerate(dataset.targets) if label == 1]
-        rest_indices = [i for i, label in enumerate(dataset.targets) if label != 1]
-        # Create subset for digit '1' and the rest
-        one_subset = Subset(dataset, one_indices)
-        rest_subset = Subset(dataset, rest_indices)
+        if len(all_digits) < 10:    
+            dataset = self.filter_mnist(dataset, all_digits)
+            
+        # Get indices of the forget_digit and the retain digits
+        retain_indices = [i for i, (_, label) in enumerate(dataset) if label != forget_digit]
+        forget_indices = [i for i, (_, label) in enumerate(dataset) if label == forget_digit]
+        
+        # Create subset for the forget_digit and the retain digits
+        retain_subset = Subset(dataset, retain_indices)
+        forget_subset = Subset(dataset, forget_indices)
+        
         # Create DataLoaders
-        dataloader_one = DataLoader(one_subset, batch_size=batch_size, shuffle=True)
-        dataloader_rest = DataLoader(rest_subset, batch_size = batch_size, shuffle = True)
-        return dataloader_one, dataloader_rest
+        dataloader_retain = DataLoader(retain_subset, batch_size=batch_size, shuffle=True)
+        dataloader_forget = DataLoader(forget_subset, batch_size=batch_size, shuffle=True)
+        return  dataloader_retain, dataloader_forget
 
 
+    def filter_mnist(self, dataset, all_digits=[1, 3, 8]):
+        indices = [i for i, (img, label) in enumerate(dataset) if label in all_digits]
+        filtered_dataset = Subset(dataset, indices)
+        return filtered_dataset
+
+
+
+
+   
     
 
-
+    

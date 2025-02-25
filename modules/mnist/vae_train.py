@@ -1,16 +1,11 @@
-import torch
-import torch.nn as nn   
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
+import torch 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
-import os, sys, csv, gc, glob
+import os, sys, csv
 import time
-from torch.autograd import grad
-from torch.nn.utils import vector_to_parameters
-import pandas as pd
 import json
+from torch.autograd import grad
 
 sys.path.append(os.path.abspath('../modules'))
 import utility as ut
@@ -18,9 +13,11 @@ import datapipe
 import vae_loss as vl
 from vae import VAE
 import classifier as cl
+import vae_viz as viz
 
 
-def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='epoch', kl_weight=1., orthogonality_weight=None, one_weight=None):
+def write_config(model, folder, epochs, epoch_length, batch_size, latent_dim, collect_interval='epoch', log_interval='epoch', kl_weight=1., orthogonality_weight=None,\
+                 one_weight=None, uniformity_weight=None, all_digits=None, forget_digit=None, img_ext='jpg'):
     sample_dir = f'{folder}/samples'    
     checkpoint_dir = f'{folder}/checkpoints'
     # At the end of the train() function, after training is complete:
@@ -30,6 +27,10 @@ def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='ep
                 "value": epochs,
                 "description": "The number of epochs to train the model."
             },
+            "epoch_length": {
+                "value": epoch_length,
+                "description": "The number of descent steps in an epoch."
+            },
             "batch_size": {
                 "value": batch_size,
                 "description": "Number of samples per training batch."
@@ -38,21 +39,17 @@ def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='ep
                 "value": 0.001,  # This example uses the default for Adam.
                 "description": "Learning rate used by the optimizer."
             },
-            "log_interval": {
-                "value": log_interval,
-                "description": "Logging frequency. 'epoch' logs per epoch or a positive integer logs every fixed number of gradient steps."
-            },
             "kl_weight": {
                 "value": kl_weight,
                 "description": "The weighting factor for the KL divergence loss component."
             },
-            "latent_dim": {
-                "value": latent_dim,
-                "description": "Dimension of the latent space in the VAE."
-            },
             "optimizer": {
                 "value": "Adam",
                 "description": "The type of optimizer used during training."
+            },
+            "device": { 
+                "value": str(model.device),
+                "description": "The device used for training."
             }
         },
         "network_setup": {
@@ -74,6 +71,25 @@ def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='ep
                 "value": checkpoint_dir,
                 "description": "Directory where model checkpoints are stored."
             }
+        },
+        "experiment": {
+            "latent_dim": {
+                "value": latent_dim,
+                "description": "Dimension of the latent space of the VAE."
+            },
+            "img_ext": {
+                "value": img_ext,
+                "description": "File extension for sample images."
+            },
+            "collect_interval": {
+                "value": collect_interval,
+                "description": "Frequency of collecting samples."
+            },
+            "log_interval": {
+                "value": log_interval,
+                "description": "Frequency of logging training loss."
+            }
+            
         }
     }
 
@@ -89,6 +105,30 @@ def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='ep
             "description": "Weight the one loss."
         }
 
+    if uniformity_weight is not None:
+        config_data["training"]["uniformity_weight"] = {
+            "value": uniformity_weight,
+            "description": "Weight the uniformity loss."
+        }
+
+
+    if forget_digit is not None:
+        config_data["experiment"]["forget_digit"] = {
+            "value": forget_digit,
+            "description": "Digit to forget."
+        }
+
+    if len(all_digits) == 10:
+        config_data["experiment"]["dataset"] = {
+            "value": 'MNIST-' + ''.join(list(map(str, all_digits))),
+            "description": "Original dataset."
+        }
+    else:
+        config_data["experiment"]["dataset"] = {
+            "value": 'MNIST',
+            "description": "Original dataset."
+        }
+
     # Save the configuration to a JSON file in the main folder.
     config_path = f"{folder}/config.json"
     with open(config_path, "w") as config_file:
@@ -96,204 +136,188 @@ def write_config(model, folder, epochs, batch_size, latent_dim, log_interval='ep
 
 
 
-def train(model, folder, epochs, batch_size, latent_dim, device, log_interval='epoch', kl_weight=1.):
-    """
-    Train a Variational Autoencoder (VAE) model on the MNIST dataset.
-
-    Parameters
-    ----------
-    model : VAE or str or None
-        The VAE model to train. Can be a VAE instance, a path to a saved model 
-        state dict, or None to initialize a new model.
-    folder : str
-        The directory where samples and checkpoints will be saved.
-    epochs : int
-        The number of epochs to train the model.
-    batch_size : int
-        The batch size for training.
-    latent_dim : int
-        The dimension of the latent space.
-    device : torch.device
-        The device to use for training (e.g., GPU or CPU).
-    log_interval : str or int, optional
-        If 'epoch' (default), logs data every epoch.
-        If an integer > 0, logs data every that many gradient descent steps.
-    
-    Notes
-    -----
-    This function trains the VAE by minimizing the combined reconstruction 
-    and KL divergence loss. It logs the losses and the time taken into a CSV file 
-    either at the end of each epoch or every specified number of gradient descent 
-    steps, and saves model checkpoints after every epoch.
-    """
-    categorizer = cl.get_classifier(device=device)
-    sample_dir = f'{folder}/samples'    
-    checkpoint_dir = f'{folder}/checkpoints'
-    ut.makedirs(sample_dir, checkpoint_dir)
-    
-
-    dataloader = datapipe.MNIST().get_dataloader(batch_size)
+def init_model(model, latent_dim, device):
     if isinstance(model, str):
-        net = VAE(latent_dim=latent_dim, device=device).to(device)
-        net.load_state_dict(torch.load(model))
+        try:
+            net = torch.load(model)
+        except:
+            net = VAE(latent_dim=latent_dim, device=device)
+            net.load_state_dict(torch.load(model))
+            net.to(device)
     elif model is None:
-        net = VAE(latent_dim=latent_dim, device=device).to(device)
+        net = VAE(latent_dim=latent_dim, device=device)
+        net.to(device)
     else:
         net = model
     net.train()
+    return net
+
+
+def get_processor(net, identifier, z_random, weights, optim, all_digits, forget_digit):
+    digits = all_digits
+    def process_batch(real_img):
+        """
+        Perform a forward + backward pass on a single batch, returning the individual loss terms.
+        """
+        kl_weight, uniformity_weight = weights
+        real_img = real_img.view(real_img.shape[0], -1).to(net.device)
+        # Forward pass
+        start_time =  time.time()
+        reconstructed_img, mu, logvar = net(real_img)
+        generated_img = net.decoder(z_random)
+        logits = identifier(generated_img)
+
+        # Compute losses
+        reconstruction_loss = vl.reconstruction_loss(reconstructed_img, real_img)
+        kl_loss = vl.kl_div(mu, logvar)
+        uniformity_loss = vl.uniformity_loss(logits, digits)
+        
+        # Combine into total loss
+        loss = reconstruction_loss + kl_weight * kl_loss + uniformity_weight * uniformity_loss
+
+        # Backprop + optimize
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
+        elapsed_time = time.time() - start_time
+
+        return reconstruction_loss.item(), kl_loss.item(), uniformity_loss.item(), generated_img, logits, elapsed_time
+    return process_batch
+
+
+def get_logger(net, identifier, dataloader, weights, csv_file, log_interval, all_digits):
+    def log_results(step, losses, elapsed_time, real_img, generated_img, logits):
+        """
+        Log a single row of results (rec, KL, uniformity, total loss, time, and class stats) to the CSV file.
+        """
+        if step % log_interval == 0:
+            kl_weight, uniformity_weight = weights
+            retain_sample, _ = next(iter(dataloader['retain']))
+            forget_sample, _ = next(iter(dataloader['forget']))
+            retain_sample = retain_sample.view(retain_sample.shape[0], -1).to(net.device)
+            forget_sample = forget_sample.view(forget_sample.shape[0], -1).to(net.device)
+            orthogonality = vl.orthogonality_loss(net, identifier, retain_sample, forget_sample, kl_weight, uniformity_weight, all_digits)
+            losses.insert(-2, orthogonality.item())
+
+            img_quality = [cl.frechet_inception_distance(real_img, generated_img, identifier), cl.inception_score(logits).item()]
+            # Compute class counts and ambiguities
+            class_counts = cl.count_from_logits(logits) / logits.shape[0]
+            entropy, margin = cl.ambiguity(logits)
+            img_quality += [entropy.mean().item(), margin.mean().item()]
+
+            # Write row to the CSV file
+            with open(csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([step] + losses + [elapsed_time] + img_quality + class_counts.tolist())
+    return log_results
+
+
+def get_saver(net, save_steps, checkpoint_dir, epoch_length):
+    def save(step):
+        if step in save_steps:
+            if step % epoch_length == 0:
+                torch.save(net, f"{checkpoint_dir}/vae_epoch_{int(step/epoch_length)}.pth")
+            else:
+                torch.save(net, f"{checkpoint_dir}/vae_step_{step}.pth")
+    return save
+
+
+def get_collector(sample_dir, collect_interval, grid_size, img_ext='jpg'):
+    def collect_samples(generated_img, step):
+        if step % collect_interval == 0:
+            fig, axes = plt.subplots(grid_size, grid_size, figsize=(8, 8))
+            axes = axes.flatten()
+            generated_img = generated_img.detach().cpu().reshape(-1, 28, 28)
+            for i, ax in enumerate(axes):
+                ax.imshow(generated_img[i], cmap="gray", vmin=0, vmax=1)
+                ax.axis("off")
+            fig.suptitle(f"Step = {step}")
+            plt.savefig(f"{sample_dir}/sample_{step}.{img_ext}", bbox_inches="tight", dpi=300)
+            plt.close(fig)
+    return collect_samples
+
+
+def init(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10, kl_weight=1.,\
+        uniformity_weight=1e4, orthogonality_weight=10., all_digits=None, forget_digit=None, img_ext='jpg',\
+        classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", train_mode='original'):
+    device = ut.get_device()
+    identifier = cl.get_classifier(classifier_path, device=device)
+    sample_dir = f'{folder}/samples'
+    checkpoint_dir = f'{folder}/checkpoints'
+    ut.makedirs(sample_dir, checkpoint_dir)
+    dataloader = {'original': datapipe.MNIST().get_dataloader(batch_size, all_digits=all_digits)}
+    dataloader_retain, dataloader_forget = datapipe.MNIST().get_dataloader_rf(batch_size, all_digits=all_digits, forget_digit=forget_digit)
+    dataloader['retain'] = dataloader_retain
+    dataloader['forget'] = dataloader_forget
+    net = init_model(model, latent_dim, device)
     optim = torch.optim.Adam(net.parameters())
+    z_random = torch.randn((batch_size, latent_dim)).to(device)
+    epoch_length = len(dataloader['original']) if train_mode == 'original' else min(len(dataloader['forget']), len(dataloader['retain']))
+    epochs = int(np.ceil(num_steps/epoch_length))
+    num_steps = epochs * epoch_length
+    grid_size = int(np.ceil(np.sqrt(batch_size)))
 
-    # Determine logging mode and write CSV header accordingly.
-    if log_interval == 'epoch':
-        header = ["Epoch", "Reconstruction Loss", "KL Loss", "Total Loss", "Time"]
-        csv_file = f"{checkpoint_dir}/training_log_epoch.csv"
-    elif isinstance(log_interval, int) and log_interval > 0:
-        header = ["Step", "Reconstruction Loss", "KL Loss", "Total Loss", "Time"]
-        csv_file = f"{checkpoint_dir}/training_log_step.csv"
+    if isinstance(save_steps, list):
+        save_steps = save_steps + [epoch_length, num_steps]
+        save_steps = list(set(save_steps))
+        save_steps.sort()
     else:
-        raise ValueError("log_interval must be 'epoch' or a positive integer")
-    header += ["Entropy", "Margin", "Ambiguity"] + ["{} Fraction".format(i) for i in range(10)]
+        save_steps = [epoch_length, num_steps]
 
-    # Write header to CSV file (overwriting any existing file).
+    if collect_interval == 'epoch':
+        collect_interval = epoch_length
+
+    if log_interval == 'epoch':         
+        log_interval = epoch_length
+
+    # ---------------------------------------------------
+    # Prepare CSV logging
+    # ---------------------------------------------------     
+    csv_file = f"{checkpoint_dir}/training_log.csv"
+    # Extra columns for class distribution + ambiguity
+    header = ["Step", "Reconstruction Loss", "KL Loss", "Uniformity Loss", "Orthogonality Loss", "Total Loss", "Time"]
+    header += ["FID", "IS", "Entropy", "Margin"] + [f"{i} Fraction" for i in range(10)]
+    # Write CSV header
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(header)
+    # Save config
+    write_config(model=net, folder=folder, epochs=epochs, epoch_length=epoch_length, batch_size=batch_size, latent_dim=latent_dim,\
+                 collect_interval=collect_interval, log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
+                 all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext)
 
-    write_config(model=net, folder=folder, epochs=epochs, batch_size=batch_size, latent_dim=latent_dim,\
-                    log_interval=log_interval, kl_weight=kl_weight)
-
-    z_random = torch.randn((batch_size, latent_dim)).to(device)
-    
-
-    if log_interval == 'epoch':
-        # logits = torch.zeros((epochs, batch_size, 10)).to(device)
-        # Logging per epoch.
-        for epoch_i in tqdm(range(1, epochs + 1), desc="Epochs"):
-            start_time = time.time()
-            epoch_rec_loss = 0.0
-            epoch_kl_loss = 0.0
-            num_batches = 0
-
-            for _, (real_img, _) in enumerate(dataloader):
-                real_img = real_img.view(real_img.shape[0], -1).to(device)
-
-                reconstructed, mu, logvar = net(real_img)
-                reconstruction_loss = vl.reconstruction_loss(reconstructed, real_img)
-                kl_loss = vl.kl_div(mu, logvar)
-                loss = kl_weight*kl_loss + reconstruction_loss
-
-                optim.zero_grad()
-                loss.backward()
-                optim.step()
-
-                epoch_rec_loss += reconstruction_loss.item()
-                epoch_kl_loss += kl_loss.item()
-                num_batches += 1
-           
-
-            # Compute average losses and elapsed time for the epoch.
-            epoch_rec_loss /= num_batches
-            epoch_kl_loss /= num_batches
-            total_loss = epoch_rec_loss + kl_weight*epoch_kl_loss
-            epoch_time = time.time() - start_time
-
-            with torch.no_grad():
-                logits = categorizer(net.decoder(z_random))
-
-            class_counts = cl.count_from_logits(logits) / batch_size
-            entropy, margin, ambiguity = cl.ambiguity(logits)
-            entropy, margin, ambiguity = entropy.mean(), margin.mean(), ambiguity.mean()
-
-            # Log the epoch's results.
-            with open(csv_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([epoch_i, epoch_rec_loss, epoch_kl_loss, total_loss, epoch_time] +\
-                                [entropy.item(), margin.item(), ambiguity.item()] + class_counts.tolist())
-
-            # Save a checkpoint at the end of the epoch.
-            torch.save(net.state_dict(), f"{checkpoint_dir}/vae_{epoch_i}.pth")
-    else:
-        # Logging every fixed number of gradient descent steps.
-        global_step = 0
-        interval_rec_loss = 0.0
-        interval_kl_loss = 0.0
-        count_steps = 0
-        interval_start_time = time.time()
-        logits = torch.zeros((epochs*len(dataloader), batch_size, 10)).to(device)
-
-        for epoch_i in tqdm(range(1, epochs + 1), desc="Epochs"):
-            for _, (real_img, _) in enumerate(dataloader):
-                global_step += 1
-                count_steps += 1
-                real_img = real_img.view(real_img.shape[0], -1).to(device)
-
-                reconstructed, mu, logvar = net(real_img)
-                reconstruction_loss = vl.reconstruction_loss(reconstructed, real_img)
-                kl_loss = vl.kl_div(mu, logvar)
-                loss = kl_weight*kl_loss + reconstruction_loss
-
-                optim.zero_grad()
-                loss.backward()
-                optim.step()
-
-                interval_rec_loss += reconstruction_loss.item()
-                interval_kl_loss += kl_loss.item()
-
-                
-                
-                # Log every 'log_interval' steps.
-                if count_steps == log_interval:
-                    avg_rec = interval_rec_loss / count_steps
-                    avg_kl = interval_kl_loss / count_steps
-                    total_loss = avg_rec + kl_weight*avg_kl
-                    interval_time = time.time() - interval_start_time
-
-                    with torch.no_grad():
-                        logits = categorizer(net.decoder(z_random))
-
-                    class_counts = cl.count_from_logits(logits) / batch_size
-                    entropy, margin, ambiguity = cl.ambiguity(logits)
-                    entropy, margin, ambiguity = entropy.mean(), margin.mean(), ambiguity.mean()
-
-                    with open(csv_file, mode='a', newline='') as file:
-                        writer = csv.writer(file)
-                        writer.writerow([global_step, avg_rec, avg_kl, total_loss, interval_time] +\
-                                        [entropy.item(), margin.item(), ambiguity.item()] + class_counts.tolist())
-
-                    # Reset interval accumulators.
-                    interval_rec_loss = 0.0
-                    interval_kl_loss = 0.0
-                    count_steps = 0
-                    interval_start_time = time.time()
-
-            # Save a checkpoint at the end of each epoch.
-            torch.save(net.state_dict(), f"{checkpoint_dir}/vae_{epoch_i}.pth")
-
-        # Log any remaining steps that didn't complete the final interval.
-        if count_steps > 0:
-            avg_rec = interval_rec_loss / count_steps
-            avg_kl = interval_kl_loss / count_steps
-            total_loss = avg_rec + avg_kl
-            interval_time = time.time() - interval_start_time
-
-            with torch.no_grad():
-                logits = categorizer(net.decoder(z_random))
-            
-            class_counts = cl.count_from_logits(logits) / batch_size
-            entropy, margin, ambiguity = cl.ambiguity(logits)
-            entropy, margin, ambiguity = entropy.mean(), margin.mean(), ambiguity.mean()
-            
-            with open(csv_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([global_step, avg_rec, avg_kl, total_loss, interval_time] +\
-                                        [entropy.item(), margin.item(), ambiguity.item()] + class_counts.tolist())
-
-    # np.save(f"{checkpoint_dir}/logits.npy", logits.cpu().numpy())
+    return net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
+           num_steps,save_steps, collect_interval, log_interval, csv_file, device, grid_size
 
 
 
+def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
+          kl_weight=1., uniformity_weight=1e4, all_digits=list(range(10)), forget_digit=1,\
+          img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth"):
+    # ---------------------------------------------------
+    # Setup
+    # ---------------------------------------------------
+    net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
+    num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size \
+    = init(model, folder, num_steps, batch_size, latent_dim=latent_dim, save_steps=save_steps, collect_interval=collect_interval,\
+           log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
+           all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext, classifier_path=classifier_path)
+    process_batch = get_processor(net, identifier, z_random, (kl_weight, uniformity_weight), optim, all_digits, forget_digit)    
+    log_results = get_logger(net, identifier, dataloader, (kl_weight, uniformity_weight), csv_file, log_interval, all_digits)
+    save = get_saver(net, save_steps, checkpoint_dir, epoch_length)
+    collect_samples = get_collector(sample_dir, collect_interval, grid_size, img_ext)   
 
-
-
-
-
+    # ---------------------------------------------------
+    # Main training loop
+    # ---------------------------------------------------
+    global_step = 0
+    for _ in tqdm(range(1, epochs + 1), desc="Epochs"):
+        for _, (real_img, _) in enumerate(dataloader['original']):
+            global_step += 1
+            # -- Process a single batch
+            rec_loss, kl_loss, unif_loss, generated_img, logits, elapsed_time = process_batch(real_img)
+            loss = rec_loss + kl_weight * kl_loss + uniformity_weight * unif_loss
+            log_results(step=global_step, losses=[rec_loss, kl_loss, unif_loss, loss], elapsed_time=elapsed_time, real_img=real_img, generated_img=generated_img, logits=logits)
+            save(step=global_step)
+            collect_samples(generated_img, step=global_step)
+    viz.summarize_training(folder)

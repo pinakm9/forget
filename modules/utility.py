@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import glob, os, json
 import numpy as np
+import platform
+import cv2
 
 
 
@@ -237,3 +239,76 @@ def get_trainable_params(model: nn.Module):
     """
     trainable_params = [param for param in model.parameters() if param.requires_grad]
     return trainable_params#torch.cat([p.view(-1) for p in trainable_params], dim=0).to(model.device)
+
+
+def get_device():
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif platform.system() == "Darwin":
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    return device
+
+
+
+def stitch(image_folder, img_ext, output_video, total_duration, fps=None, delete_images=False):
+    """
+    Converts a sequence of images into a video.
+
+    Parameters:
+    - image_folder (str): Path to the folder containing images.
+    - output_video (str): Output video file path.
+    - total_duration (float): Total duration of the video in seconds.
+    - fps (int, optional): Frames per second. If None, it is calculated based on total_duration.
+    
+    Returns:
+    - None
+    """
+    # Get all image files in sorted order
+    image_files = sorted(glob.glob(os.path.join(image_folder, f"*.{img_ext}")))
+
+    if not image_files:
+        raise ValueError("No images found in the specified folder.")
+
+    # Read the first image to get width and height
+    first_frame = cv2.imread(image_files[0])
+    height, width, _ = first_frame.shape
+
+    # Determine FPS based on total duration
+    if fps is None:
+        fps = max(1, len(image_files) / total_duration)  # Avoid zero division
+
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+
+    for img_path in image_files:
+        frame = cv2.imread(img_path)
+        out.write(frame)
+
+    out.release()
+    # Delete images if flag is set
+    if delete_images:
+        for img_path in image_files:
+            os.remove(img_path)
+    print(f"Video saved at {output_video}")
+
+# Example usage:
+# images_to_video("path_to_images", "output_video.mp4", total_duration=5)
+
+def get_config(folder):
+    with open(f"{folder}/config.json", 'r') as f:
+            config = json.load(f)
+    return config
+
+
+def torch_cov(x):
+    """
+    Compute the covariance matrix for x, where x is a 2D tensor of shape (N, D).
+    """
+    n = x.size(0)
+    x_mean = torch.mean(x, dim=0, keepdim=True)
+    x_centered = x - x_mean
+    cov = x_centered.t() @ x_centered / (n - 1)
+    return cov
