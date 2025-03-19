@@ -32,10 +32,10 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
 
         generated_img = net.decoder(z_random)
         logits = identifier(generated_img)
-        uniformity = vl.uniformity_loss_surgery(logits, forget_digit=forget_digit)
+        uniformity = vl.uniformity_loss_surgery(logits, all_digits=all_digits, forget_digit=forget_digit)
 
-        loss_forget = rec_forget + kl_weight * kl_forget #+ uniformity_weight * uniformity
-        loss_retain = rec_retain + kl_weight * kl_retain #+ uniformity_weight * uniformity
+        loss_forget = rec_forget + kl_weight * kl_forget + uniformity_weight * uniformity
+        loss_retain = rec_retain + kl_weight * kl_retain + uniformity_weight * uniformity
 
         gf = torch.cat([g.view(-1) for g in grad(outputs=loss_forget, inputs=trainable_params, retain_graph=True)])
         gr = torch.cat([g.view(-1) for g in grad(outputs=loss_retain, inputs=trainable_params, retain_graph=True)]) 
@@ -43,8 +43,8 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
 
         # Remove the component of gr that is parallel to g1.
         # (An epsilon is added to avoid division by zero.)
-        gfgr = torch.dot(gf, gr)
-        gfgf = torch.dot(gf, gf)
+        gfgr = gf @ gr
+        gfgf = gf @ gf
 
         gr = gr - gf * gfgr / gfgf 
 
@@ -57,7 +57,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
 
         optim.step()
         elapsed_time = time.time() - start_time
-        orth = gfgr**2 / (gfgf * torch.dot(gr, gr))
+        orth = gfgr**2 / (gfgf * (gr @ gr))
         return (rec_retain).item(), (kl_retain).item(),  uniformity.item(), orth.item(), generated_img, logits, elapsed_time
 
     return process_batch

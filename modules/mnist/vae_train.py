@@ -17,7 +17,7 @@ import vae_viz as viz
 
 
 def write_config(model, folder, epochs, epoch_length, batch_size, latent_dim, collect_interval='epoch', log_interval='epoch', kl_weight=1., orthogonality_weight=None,\
-                 one_weight=None, uniformity_weight=None, all_digits=None, forget_digit=None, img_ext='jpg'):
+                uniformity_weight=None, forget_weight=None, all_digits=None, forget_digit=None, img_ext='jpg'):
     sample_dir = f'{folder}/samples'    
     checkpoint_dir = f'{folder}/checkpoints'
     # At the end of the train() function, after training is complete:
@@ -96,21 +96,20 @@ def write_config(model, folder, epochs, epoch_length, batch_size, latent_dim, co
     if orthogonality_weight is not None:
         config_data["training"]["orthogonality_weight"] = {
             "value": orthogonality_weight,
-            "description": "Weight the orthogonality loss."
+            "description": "Weight of the orthogonality loss."
         }
 
-    if one_weight is not None:
-        config_data["training"]["one_weight"] = {
-            "value": one_weight,
-            "description": "Weight the one loss."
+    if forget_weight is not None:
+        config_data["training"]["forget_weight"] = {
+            "value": forget_weight,
+            "description": "Weight of the forget loss."
         }
 
     if uniformity_weight is not None:
         config_data["training"]["uniformity_weight"] = {
             "value": uniformity_weight,
-            "description": "Weight the uniformity loss."
+            "description": "Weight of the uniformity loss."
         }
-
 
     if forget_digit is not None:
         config_data["experiment"]["forget_digit"] = {
@@ -237,8 +236,8 @@ def get_collector(sample_dir, collect_interval, grid_size, img_ext='jpg'):
     return collect_samples
 
 
-def init(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10, kl_weight=1.,\
-        uniformity_weight=1e4, orthogonality_weight=10., all_digits=None, forget_digit=None, img_ext='jpg',\
+def init(model='./vae.pth', folder='.', num_steps=100, batch_size=100, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10, kl_weight=1.,\
+        uniformity_weight=1e4, orthogonality_weight=10., forget_weight=None, all_digits=None, forget_digit=None, img_ext='jpg',\
         classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", train_mode='original'):
     device = ut.get_device()
     identifier = cl.get_classifier(classifier_path, device=device)
@@ -283,8 +282,9 @@ def init(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, co
         writer.writerow(header)
     # Save config
     write_config(model=net, folder=folder, epochs=epochs, epoch_length=epoch_length, batch_size=batch_size, latent_dim=latent_dim,\
-                 collect_interval=collect_interval, log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
-                 all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext)
+                collect_interval=collect_interval, log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight,\
+                orthogonality_weight=orthogonality_weight, forget_weight=forget_weight, all_digits=all_digits, forget_digit=forget_digit,\
+                img_ext=img_ext)
 
     return net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps,save_steps, collect_interval, log_interval, csv_file, device, grid_size
