@@ -1,0 +1,12 @@
+data-prelim/*
+notebooks/data/*
+data/CelebA/dataset/*
+data/MNIST/MNIST/*
+data/CelebA/vae/*
+papers/*
+*.DS_Store
+*.zip
+*.npy
+*.pth
+*evolution.png
+*.md
