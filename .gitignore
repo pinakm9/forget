@@ -1,6 +1,7 @@
 data-prelim/*
 notebooks/data/*
 data/CelebA/dataset/*
+data/CelebA/dataset-reconstructed/*
 data/MNIST/MNIST/*
 data/CelebA/vae/*
 papers/*
