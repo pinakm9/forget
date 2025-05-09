@@ -39,7 +39,7 @@ def box_muller(steps):
 
 
 
-def generate_random_samples(model, num_samples=25, latent_dim=2):
+def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False):
     """
     Generate a grid of random images using a trained VAE model.
 
@@ -63,7 +63,11 @@ def generate_random_samples(model, num_samples=25, latent_dim=2):
     device = net.device
     
     # Sample random latent vectors from a standard normal distribution
-    z_random = torch.randn(num_samples, latent_dim).to(device)
+    if bm:
+        z_random = box_muller(int(np.sqrt(num_samples)))
+        z_random = torch.tensor(z_random, dtype=torch.float32).to(device)
+    else:
+        z_random = torch.randn(num_samples, latent_dim).to(device)
 
     # Decode the latent vectors into images
     with torch.no_grad():
