@@ -554,14 +554,28 @@ class BatchCompare:
         -------
         fig, ax : matplotlib.figure.Figure, matplotlib.axes.Axes
         """
-        fig, ax = plt.subplots(1, 2, figsize=(11, 5))
+        fig, ax = plt.subplots(1, 3, figsize=(16, 5), constrained_layout=True)
         self.plot_mean_std(ax[0], "Time", log=logs[0], flag='min', rank=rank)
-        self.plot_mean_std(ax[1], "FID", log=logs[1], flag='min', rank=rank)
-        fig.subplots_adjust(wspace=0.3)
+        self.plot_mean_std(ax[2], "FID", log=logs[1], flag='min', rank=rank)
+        # fig.subplots_adjust(wspace=0.3)
         try:
-            ax[1].axhline(self.summary[0]['Original FID'], color='lightgrey', linestyle='--', label='Original FID')
+            ax[2].axhline(self.summary[0]['Original FID'], color='darkgrey', linestyle='--', label='Original model')
+            ax[2].legend(fontsize=14, loc='lower right')
         except:
             pass
+        for i, folder in enumerate(self.folders):
+            df = self.average_training_log(folder)
+            ax[1].plot(df['Step'] + 1, df['1 Fraction'], label=self.labels[i])
+        ax[1].set_xlabel('Training step', fontsize=14)
+        ax[1].set_ylabel('Fraction of males in generated images', fontsize=16)
+        ax[1].legend(fontsize=14)
+        ticks = [1, 100, 200, 300, 400, 500, 600]
+        ax[1].set_xticks(ticks)  # choose suitable max_x and step
+        ax[1].set_xticklabels([str(x) for x in ticks])
+        ax[1].tick_params(axis='x', labelsize=14)
+
+        for a in ax:
+            a.tick_params(axis='y', labelsize=14)
         return fig, ax
         
 
@@ -579,38 +593,44 @@ class BatchCompare:
             If True, use a log scale for the y-axis. Defaults to False.
         flag : str, optional
             If 'min', marks the minimum value. If 'max', marks the maximum value. Defaults to 'min'.
-        rank: bool, optional
+        rank : bool, optional
             If True, annotates each data point with its ranking. Defaults to False.
         """
         y = [summary[quantity] for summary in self.summary]
-        ax.errorbar(range(len(self.folders)), y, yerr=[std[quantity] for std in self.summary_std])
+        y_std = [std[quantity] for std in self.summary_std]
+        y_std = [np.zeros_like(y_std), y_std]
+
+        ax.errorbar(range(len(self.folders)), y, yerr=y_std)
         ax.scatter(range(len(self.folders)), y, s=50)
         ax.set_xticks(range(len(self.folders)))
-        ax.set_xticklabels(self.labels, fontsize=12)
-        ax.set_ylabel(f"{quantity}" if quantity != 'Time' else 'Time to unlearn (s)', fontsize=14)
+        ax.set_xticklabels(self.labels, fontsize=14)
+        ax.set_ylabel(f"{quantity}" if quantity != 'Time' else 'Time to unlearn (s)', fontsize=16)
         if log:
             ax.set_yscale('log')
         # if flag == 'min':
         #     ax.scatter(y.index(min(y)), min(y), marker='x', color='red', s=100)
         # elif flag == 'max':
         #     ax.scatter(y.index(max(y)), max(y), marker='x', color='red', s=100)
-       
+
         if rank:
             rankings = self.compute_rankings(y, flag=flag)
             print([std[quantity] for std in self.summary_std])
             y = np.array(y)
             y_range = y.max() - y.min()
-            # ensure minimum offset
+              # ensure minimum offset
 
-            for i, (x, y_val, rank) in enumerate(zip(range(len(y)), y, rankings)):
-                y_offset = 0.3 * max(abs(y_val), 1e-3) if log else 0.02 * y_range
-                ax.text(
-                    x, y_val - y_offset,
-                    f'{rank}',
-                    ha='center', va='bottom', fontsize=13,
-                    bbox=dict(facecolor='white', edgecolor='none', pad=0.0, alpha=1.0)
-                )
-       
+            # for i, (x, y_val, rank) in enumerate(zip(range(len(y)), y, rankings)):
+            #     y_offset = 0.3 * max(abs(y_val), 1e-3) if log else 0.02 * y_range
+            #     ax.text(
+            #         x, y_val - y_offset,
+            #         f'{rank}',
+            #         ha='center', va='bottom', fontsize=13,
+            #         bbox=dict(facecolor='white', edgecolor='none', pad=0.0, alpha=1.0)
+            #     )
+            xtick_labels = [f"{label}\n({rank})" for label, rank in zip(self.labels, rankings)]
+            ax.set_xticklabels(xtick_labels, fontsize=14)
+        min_y = np.min(y)
+        ax.set_ylim(bottom=min_y * 0.8)
     
     def compute_rankings(self, y, flag='min'):
         """
@@ -634,3 +654,59 @@ class BatchCompare:
         else:
             ranks = (-y).argsort().argsort() + 1
         return ranks
+    
+
+    def average_training_log(self, folder, relative_path='checkpoints/training_log.csv'):
+        """
+        Reads training_log.csv from each folder and computes the average over all.
+
+        Parameters
+        ----------
+        folder : str
+            Path to the folder containing the training logs.
+        relative_path : str
+            Relative path to the training log inside each folder.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the average of the training logs.
+        """
+        dfs = []
+        folders = self.get_expr_folders(folder)
+        for folder in folders:
+            path = os.path.join(folder, relative_path)
+            df = pd.read_csv(path)
+            dfs.append(df)
+
+        # Ensure all DataFrames have the same length and columns
+        for i, df in enumerate(dfs):
+            if not df.columns.equals(dfs[0].columns) or len(df) != len(dfs[0]):
+                raise ValueError(f"Inconsistent format or length in {folders[i]}")
+
+        # Stack and average
+        stacked = pd.concat(dfs, axis=0, keys=range(len(dfs)))  # multi-index [replicate, row]
+        mean_df = stacked.groupby(level=1).mean()  # average over folders
+
+        return mean_df
+    
+
+    def get_expr_folders(self, parent_dir):
+        """
+        Returns a list of subfolders in parent_dir that start with 'expr-'.
+
+        Parameters
+        ----------
+        parent_dir : str
+            The path to the directory to search.
+
+        Returns
+        -------
+        list of str
+            List of full paths to subfolders starting with 'expr-'.
+        """
+        return [
+            os.path.join(parent_dir, name)
+            for name in os.listdir(parent_dir)
+            if name.startswith('expr-') and os.path.isdir(os.path.join(parent_dir, name))
+        ]

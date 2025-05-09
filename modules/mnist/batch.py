@@ -475,16 +475,16 @@ class BatchCompare:
         # fig.subplots_adjust(wspace=0.3)
         try:
             ax[2].axhline(self.summary[0]['Original FID'], color='darkgrey', linestyle='--', label='Original model')
-            ax[2].legend(fontsize=14)
+            ax[2].legend(fontsize=14, loc='upper right')
         except:
             pass
         for i, folder in enumerate(self.folders):
             df = self.average_training_log(folder)
             ax[1].plot(df['Step'] + 1, df['1 Fraction'], label=self.labels[i])
         ax[1].set_xlabel('Training step', fontsize=14)
-        ax[1].set_ylabel('Fraction of 1s in generated images', fontsize=14)
+        ax[1].set_ylabel('Fraction of males in generated images', fontsize=16)
         ax[1].legend(fontsize=14)
-        ticks = [1, 100, 200, 300, 400, 500]
+        ticks = [1, 100, 200, 300, 400, 500, 600]
         ax[1].set_xticks(ticks)  # choose suitable max_x and step
         ax[1].set_xticklabels([str(x) for x in ticks])
         ax[1].tick_params(axis='x', labelsize=14)
@@ -519,7 +519,7 @@ class BatchCompare:
         ax.scatter(range(len(self.folders)), y, s=50)
         ax.set_xticks(range(len(self.folders)))
         ax.set_xticklabels(self.labels, fontsize=14)
-        ax.set_ylabel(f"{quantity}" if quantity != 'Time' else 'Time to unlearn (s)', fontsize=14)
+        ax.set_ylabel(f"{quantity}" if quantity != 'Time' else 'Time to unlearn (s)', fontsize=16)
         if log:
             ax.set_yscale('log')
         # if flag == 'min':
@@ -625,6 +625,3 @@ class BatchCompare:
             for name in os.listdir(parent_dir)
             if name.startswith('expr-') and os.path.isdir(os.path.join(parent_dir, name))
         ]
-
-
-        
