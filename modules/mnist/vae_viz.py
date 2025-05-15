@@ -27,8 +27,8 @@ def box_muller(steps):
         A tensor of shape (steps**2, 2) containing the generated points.
     """
     p = []
-    u1 = np.linspace(0.01, 0.99, steps)
-    u2 = np.linspace(0.01, 0.99, steps)
+    u1 = np.linspace(0.05, .95, steps)
+    u2 = np.linspace(0.05, .95, steps)
     for i in range(len(u1)):
         for j in range(len(u2)):
             z1 = np.sqrt(-2*np.log(u1[i]))*np.cos(2*np.pi*u2[j])
@@ -39,7 +39,7 @@ def box_muller(steps):
 
 
 
-def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False):
+def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False, title=None):
     """
     Generate a grid of random images using a trained VAE model.
 
@@ -60,7 +60,7 @@ def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False):
     """
     net = model
     net.eval()  # Set model to evaluation mode
-    device = net.device
+    device = next(net.parameters()).device
     
     # Sample random latent vectors from a standard normal distribution
     if bm:
@@ -86,66 +86,65 @@ def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False):
                 axes[i, j].imshow(generated_array[img_idx], cmap="gray")
                 axes[i, j].axis("off")
 
+    if title is not None:
+        fig.suptitle(title, fontsize=16)
     plt.show()
-    return generated_images
+    return fig, axes
 
 
-def compare_generated_samples(model_a, model_b, num_samples=25, latent_dim=2):
+
+def compare_generated_samples(model_a, model_b, num_samples=25, latent_dim=2, bm=False, seed=None):
     """
-    Generate a side-by-side grid of random images using two VAE models for the same latent vectors.
+    Compare VAE-generated samples using the same latent vectors in two separate figures.
 
-    Parameters
-    ----------
-    model_a : VAE
-        The first VAE model.
-    model_b : VAE
-        The second VAE model.
-    num_samples : int
-        The number of images to generate.
-    latent_dim : int
-        The dimensionality of the latent space.
+    Args:
+        model_a: First VAE model.
+        model_b: Second VAE model.
+        num_samples: Number of samples to generate.
+        latent_dim: Dimensionality of latent space.
+        bm: Use Box-Muller sampling instead of torch.randn.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Tuple of matplotlib figures: (fig_a, fig_b)
     """
+    if seed is not None:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
     model_a.eval()
     model_b.eval()
-    
-    device = model_a.device
-    z_random = box_muller(int(np.sqrt(num_samples)))
-    z_random = torch.tensor(z_random, dtype=torch.float32).to(device) #torch.randn(num_samples, latent_dim).to(device)
+
+    device = next(model_a.parameters()).device
+    if bm:
+        z_random = box_muller(num_samples).to(device)
+    else:
+        z_random = torch.randn(num_samples, latent_dim).to(device)
 
     with torch.no_grad():
-        images_a = model_a.decoder(z_random).cpu().numpy().reshape(num_samples, 28, 28)
-        images_b = model_b.decoder(z_random).cpu().numpy().reshape(num_samples, 28, 28)
+        images_a = model_a.decoder(z_random).cpu().view(-1, 28, 28).numpy()
+        images_b = model_b.decoder(z_random).cpu().view(-1, 28, 28).numpy()
 
-    grid_size = int(num_samples ** 0.5)
-    fig, axes = plt.subplots(grid_size, grid_size * 2, figsize=(2 * grid_size, grid_size))
+    grid_size = int(np.ceil(np.sqrt(num_samples)))
 
-    for i in range(grid_size):
-        for j in range(grid_size):
-            idx = i * grid_size + j
-            if idx < num_samples:
-                ax_a = axes[i, j * 2]
-                ax_b = axes[i, j * 2 + 1]
+    def create_figure(images, title):
+        fig, axes = plt.subplots(grid_size, grid_size, figsize=(grid_size, grid_size))
+        axes = axes.flatten()
+        for idx in range(num_samples):
+            axes[idx].imshow(images[idx], cmap='gray')
+            axes[idx].axis('off')
+        for idx in range(num_samples, len(axes)):
+            axes[idx].axis('off')  # Hide extra axes if any
+        # fig.suptitle(title, fontsize=16)
+        plt.tight_layout()
+        return fig
 
-                ax_a.imshow(images_a[idx], cmap='gray')
-                ax_b.imshow(images_b[idx], cmap='gray')
+    fig_a = create_figure(images_a, title="Original model")
+    fig_b = create_figure(images_b, title="After unlearning")
 
-                ax_a.axis('off')
-                ax_b.axis('off')
+    return fig_a, fig_b
 
-    # Add centered titles above each grid
-    fig.suptitle('', y=1.0)
-    fig.text(0.25, 0.98, "Original model", ha='center', fontsize=16)
-    fig.text(0.75, 0.98, "After unlearning", ha='center', fontsize=16)
-
-    # Add vertical line between grids
-    fig.subplots_adjust(wspace=0.05, hspace=0.05)
-    # Add vertical line between the grids
-    line = mlines.Line2D([0.5, 0.5], [0, 1], transform=fig.transFigure, color='black', linewidth=1, linestyle='-')
-    fig.add_artist(line)
-
-    plt.tight_layout()
-    plt.show()
-    return images_a, images_b
 
 
 

@@ -482,7 +482,7 @@ class BatchCompare:
             df = self.average_training_log(folder)
             ax[1].plot(df['Step'] + 1, df['1 Fraction'], label=self.labels[i])
         ax[1].set_xlabel('Training step', fontsize=14)
-        ax[1].set_ylabel('Fraction of males in generated images', fontsize=16)
+        ax[1].set_ylabel('Fraction of 1\'s in generated images', fontsize=16)
         ax[1].legend(fontsize=14)
         ticks = [1, 100, 200, 300, 400, 500, 600]
         ax[1].set_xticks(ticks)  # choose suitable max_x and step

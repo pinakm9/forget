@@ -167,9 +167,9 @@ def compare_model_outputs_2(model_a, model_b, num_samples=25, save_path=None, la
     titles = []
     for i in range(num_samples):
         images.append(images_a[i])
-        titles.append("Before")
+        titles.append(f"Before-{i+1}")
         images.append(images_b[i])
-        titles.append("After")
+        titles.append(f"After-{i+1}")
 
     total_images = len(images)  # 2 * num_samples
     grid_size = math.ceil(math.sqrt(total_images))

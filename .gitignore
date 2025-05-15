@@ -14,6 +14,7 @@ papers/*
 *.pth
 *evolution.png
 *.md
+*.jpg
 !data/CelebA/vae/vae_200.pth
 !data/CelebA/cnn/cnn_10.pth
 !data/MNIST/vae/vae_200.pth

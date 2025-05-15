@@ -566,6 +566,7 @@ class BatchCompare:
         for i, folder in enumerate(self.folders):
             df = self.average_training_log(folder)
             ax[1].plot(df['Step'] + 1, df['1 Fraction'], label=self.labels[i])
+        ax[1].axhline(0.04, color='black')
         ax[1].set_xlabel('Training step', fontsize=14)
         ax[1].set_ylabel('Fraction of males in generated images', fontsize=16)
         ax[1].legend(fontsize=14)
