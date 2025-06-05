@@ -39,7 +39,7 @@ def box_muller(steps):
 
 
 
-def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False, title=None):
+def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False, title=None, seed=None):
     """
     Generate a grid of random images using a trained VAE model.
 
@@ -58,6 +58,10 @@ def generate_random_samples(model, num_samples=25, latent_dim=2, bm=False, title
     VAE model. The images are sampled from a standard normal distribution in
     the latent space.
     """
+    if seed is not None:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
     net = model
     net.eval()  # Set model to evaluation mode
     device = next(net.parameters()).device

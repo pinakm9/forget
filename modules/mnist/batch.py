@@ -547,9 +547,12 @@ class BatchCompare:
         min_y = np.min(y)
         ax.set_ylim(bottom=min_y * 0.8)
     
-    def compute_rankings(self, y, flag='min'):
+    
+
+    def compute_rankings(self,y, flag='min'):
         """
-        Computes the rankings of the given array `y` according to the flag.
+        Computes the rankings of the given array `y` with rounding to 3 decimals after 0.
+        Identical values after rounding receive identical ranks.
 
         Parameters
         ----------
@@ -561,13 +564,25 @@ class BatchCompare:
         Returns
         -------
         ranks : ndarray
-            The rankings of `y` according to `flag`.
+            The rankings of `y` with ties based on rounded values.
         """
         y = np.array(y)
+        
+        # Round to 3 decimals after 0
+        rounded = np.round(y, 3)
+        
+        # Get unique values in sorted order
         if flag == 'min':
-            ranks = y.argsort().argsort() + 1
+            unique_vals = np.sort(np.unique(rounded))
         else:
-            ranks = (-y).argsort().argsort() + 1
+            unique_vals = np.sort(np.unique(rounded))[::-1]
+
+        # Map each unique value to a rank
+        val_to_rank = {val: rank + 1 for rank, val in enumerate(unique_vals)}
+
+        # Assign ranks based on rounded values
+        ranks = np.array([val_to_rank[val] for val in rounded])
+
         return ranks
     
 

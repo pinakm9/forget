@@ -5,7 +5,7 @@ import torch.nn as nn
 import glob, os, json
 import numpy as np
 import platform
-import cv2
+import cv2, re
 
 
 
@@ -252,21 +252,42 @@ def get_device():
 
 
 
-def stitch(image_folder, img_ext, output_video, total_duration, fps=None, delete_images=False):
+def stitch(image_folder, img_ext='jpg', output_video=None, total_duration=30, fps=None, delete_images=False, max_images=None):
     """
-    Converts a sequence of images into a video.
+    Stitch images in the specified folder into a video.
 
     Parameters:
-    - image_folder (str): Path to the folder containing images.
-    - output_video (str): Output video file path.
-    - total_duration (float): Total duration of the video in seconds.
-    - fps (int, optional): Frames per second. If None, it is calculated based on total_duration.
-    
-    Returns:
-    - None
+        image_folder (str): The folder containing the images to be stitched.
+        img_ext (str, optional): The image file extension. Defaults to 'jpg'.
+        output_video (str, optional): The path to the output video file. If None, the video will be saved to `video.mp4` inside the image folder. Defaults to None.
+        total_duration (int, optional): The total duration of the video in seconds. Defaults to 30.
+        fps (int, optional): The frames per second of the video. If None, the fps will be determined based on the total duration. Defaults to None.
+        delete_images (bool, optional): Whether to delete the images after stitching. Defaults to False.
+        max_images (int, optional): The maximum number of images to include in the video. If None, all images will be included. Defaults to None.
+
+    Raises:
+        ValueError: If no images are found in the specified folder.
+
+    Notes:
+        The images are sorted in natural order based on their filenames.
+        The first image is read to get the width and height of the video.
     """
+    if output_video is None:
+        output_video = os.path.join(image_folder, "video.mp4")
     # Get all image files in sorted order
-    image_files = sorted(glob.glob(os.path.join(image_folder, f"*.{img_ext}")))
+    def natural_key(path):
+        """
+        Split the filename into alternating text and number chunks,
+        so that 'sample_10.jpg' → ['sample_', 10, '.jpg'].
+        """
+        filename = os.path.basename(path)
+        parts = re.split(r'(\d+)', filename)
+        return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+    # …
+
+    image_files = glob.glob(os.path.join(image_folder, f"*.{img_ext}"))
+    image_files = sorted(image_files, key=natural_key)
 
     if not image_files:
         raise ValueError("No images found in the specified folder.")
@@ -283,7 +304,7 @@ def stitch(image_folder, img_ext, output_video, total_duration, fps=None, delete
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
-    for img_path in image_files:
+    for img_path in image_files if max_images is None else image_files[:max_images]:
         frame = cv2.imread(img_path)
         out.write(frame)
 

@@ -566,7 +566,7 @@ class BatchCompare:
         for i, folder in enumerate(self.folders):
             df = self.average_training_log(folder)
             ax[1].plot(df['Step'] + 1, df['1 Fraction'], label=self.labels[i])
-        ax[1].axhline(0.04, color='black')
+        # ax[1].axhline(0.04, color='black')
         ax[1].set_xlabel('Training step', fontsize=14)
         ax[1].set_ylabel('Fraction of males in generated images', fontsize=16)
         ax[1].legend(fontsize=14)
@@ -633,9 +633,12 @@ class BatchCompare:
         min_y = np.min(y)
         ax.set_ylim(bottom=min_y * 0.8)
     
+    
+
     def compute_rankings(self, y, flag='min'):
         """
-        Computes the rankings of the given array `y` according to the flag.
+        Computes the rankings of the given array `y` with rounding to 3 decimals after 0.
+        Identical values after rounding receive identical ranks.
 
         Parameters
         ----------
@@ -647,15 +650,27 @@ class BatchCompare:
         Returns
         -------
         ranks : ndarray
-            The rankings of `y` according to `flag`.
+            The rankings of `y` with ties based on rounded values.
         """
         y = np.array(y)
+        
+        # Round to 3 decimals after 0
+        rounded = np.round(y, 3)
+        
+        # Get unique values in sorted order
         if flag == 'min':
-            ranks = y.argsort().argsort() + 1
+            unique_vals = np.sort(np.unique(rounded))
         else:
-            ranks = (-y).argsort().argsort() + 1
+            unique_vals = np.sort(np.unique(rounded))[::-1]
+
+        # Map each unique value to a rank
+        val_to_rank = {val: rank + 1 for rank, val in enumerate(unique_vals)}
+
+        # Assign ranks based on rounded values
+        ranks = np.array([val_to_rank[val] for val in rounded])
+
         return ranks
-    
+        
 
     def average_training_log(self, folder, relative_path='checkpoints/training_log.csv'):
         """

@@ -13,7 +13,9 @@ papers/*
 *.npy
 *.pth
 *evolution.png
-*.md
+notebooks/talk/*
+talk/*
+*README_review.md
 *.jpg
 !data/CelebA/vae/vae_200.pth
 !data/CelebA/cnn/cnn_10.pth
