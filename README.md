@@ -1,5 +1,5 @@
 ## Description
-This repository contains implementations of various unlearning algorithms for generative models in PyTorch. Users can run experiments on VAEs trained on MNIST/CelebA using the code provided here. The unlearning algorithms provided here are:
+This repository contains implementations of various unlearning algorithms described in [https://arxiv.org/pdf/2506.04712](https://arxiv.org/pdf/2506.04712) for generative models in PyTorch. Users can run experiments on VAEs trained on MNIST/CelebA using the code provided here. The unlearning algorithms provided here are:
 - A: Gradient Ascent 
 - A-D: Alternative Ascent and Descent
 - SA: Gradient Surgery #1 (ascent with forget gradients)
