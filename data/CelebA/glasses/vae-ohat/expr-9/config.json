@@ -1,0 +1,80 @@
+{
+    "training": {
+        "epochs": {
+            "value": 5,
+            "description": "The number of epochs to train the model."
+        },
+        "epoch_length": {
+            "value": 103,
+            "description": "The number of descent steps in an epoch."
+        },
+        "batch_size": {
+            "value": 128,
+            "description": "Number of samples per training batch."
+        },
+        "learning_rate": {
+            "value": 0.001,
+            "description": "Learning rate used by the optimizer."
+        },
+        "kl_weight": {
+            "value": 1,
+            "description": "The weighting factor for the KL divergence loss component."
+        },
+        "optimizer": {
+            "value": "Adam",
+            "description": "The type of optimizer used during training."
+        },
+        "device": {
+            "value": "cuda:0",
+            "description": "The device used for training."
+        },
+        "orthogonality_weight": {
+            "value": 1000.0,
+            "description": "Weight of the orthogonality loss."
+        },
+        "forget_weight": {
+            "value": 0.0,
+            "description": "Weight of the forget loss."
+        },
+        "uniformity_weight": {
+            "value": 1000.0,
+            "description": "Weight of the uniformity loss."
+        }
+    },
+    "paths": {
+        "sample_dir": {
+            "value": "/content/glasses/vae-ohat/expr-9/samples",
+            "description": "Directory where generated sample images are saved."
+        },
+        "checkpoint_dir": {
+            "value": "/content/glasses/vae-ohat/expr-9/checkpoints",
+            "description": "Directory where model checkpoints are stored."
+        }
+    },
+    "experiment": {
+        "latent_dim": {
+            "value": 512,
+            "description": "Dimension of the latent space of the VAE."
+        },
+        "img_ext": {
+            "value": "jpg",
+            "description": "File extension for sample images."
+        },
+        "collect_interval": {
+            "value": 103,
+            "description": "Frequency of collecting samples."
+        },
+        "log_interval": {
+            "value": 1,
+            "description": "Frequency of logging training loss."
+        },
+        "forget_class": {
+            "value": 1,
+            "description": "class to forget."
+        },
+        "dataset": {
+            "value": "MNIST",
+            "description": "Original dataset."
+        }
+    }
+}

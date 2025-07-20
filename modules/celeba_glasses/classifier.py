@@ -45,7 +45,7 @@ class CNN(nn.Module):
     
 
 
-def count_glasses(images, model="../../data/CelebA/cnn/cnn_10.pth", device="cuda"):
+def count_glasses(images, model="../../data/CelebA/cnn-glasses/cnn_200.pth", device="cuda"):
     """
     Count the number of images that are classified as glasses using a pre-trained CNN model.
 
@@ -77,7 +77,7 @@ def count_glasses(images, model="../../data/CelebA/cnn/cnn_10.pth", device="cuda
     return count
 
 
-def get_classifier(path="../../data/CelebA/cnn/cnn_10.pth", device="cuda"):
+def get_classifier(path="../../data/CelebA/cnn-glasses/cnn_200.pth", device="cuda"):
     """
     Load a pre-trained CNN classifier from a checkpoint file and return it as an instance of nn.Module.
     
