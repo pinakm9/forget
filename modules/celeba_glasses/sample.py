@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 
 # Rejection sampling function
-def sample_glasses_latents(G, C, latent_dim=100, batch_size=64, num_samples=100, threshold=0.5, device='cpu'):
+def sample_glasses_latents(G, C, latent_dim=512, batch_size=64, num_samples=100, threshold=0.5, device='cpu'):
     """
     Perform rejection sampling to generate latent vectors that produce images classified as having glasses.
 

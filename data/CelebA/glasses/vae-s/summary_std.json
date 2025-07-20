@@ -1,15 +1,15 @@
 {
-  "Step": 0.0,
-  "Reconstruction Loss": 1171.7601439434065,
-  "KL Loss": 162.56906096183886,
-  "Uniformity Loss": 0.7974790402348164,
-  "Orthogonality Loss": 0.3299926971585282,
-  "Total Loss": 1287.4420830718839,
-  "Time": 0.4658758891471952,
-  "Entropy": 0.04033360422237678,
-  "Margin": 0.02891076651191248,
-  "0 Fraction": 0.04749588797990832,
-  "1 Fraction": 0.04749588797990832,
-  "FID": 2.539429563809999,
-  "Time/Step": 0.000904613376984845
+  "Step": 118.5,
+  "Reconstruction Loss": NaN,
+  "KL Loss": NaN,
+  "Uniformity Loss": 0.43924757329655006,
+  "Orthogonality Loss": NaN,
+  "Total Loss": NaN,
+  "Time": 2.1768876749259114,
+  "Entropy": 0.01934340293282153,
+  "Margin": 0.01291766447368267,
+  "0 Fraction": 0.031724907037885865,
+  "1 Fraction": 0.031724907037885865,
+  "FID": NaN,
+  "Time/Step": 0.00039082145456924554
 }
