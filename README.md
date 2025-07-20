@@ -13,8 +13,8 @@ Modified versions of all the algorithms above are also provided when one has acc
 - [Installation](#installation)
 - [Usage](#usage)
     - [Navigation](#navigation)
-    - [Code Structure](#code)
-    - [Tutorial](#tutorial)
+    - [Code Structure](#code-structure)
+    - [Tutorials and Replication](#tutorials-and-replication)
 - [Data](#data)
     - [Results](#results)
     - [Pre-trained models](#pretrained)
@@ -124,9 +124,11 @@ root/
 - The unlearning algorithms are provided through the "train" function in the corresponding module. For example to apply UNO on MNIST navigate to modules/mnist/vae_ortho.py, import the train function within and run it with appropriate parameters. To find out more about the parameters of the train function please refer to its docstring.  
 - To find which .py file contains your desired algorithm, look at the short descriptions of files and folder above in [Navigation](#navigation). Also note that the short codes for the algorithms (e.g. S for Surgery) are available in [Description](#description).
 - Both root/modules/mnist and root/modules/celeba_male contain batch.py, a module that helps the user execute multiple runs of the same algorithm. batch.py contains the class BatchExperiment which takes a train_func argument which can be any train function imported from an appropriate algorithm file as described above.
-- An example for running batch experiments locally can be found in the root/notebooks/tutorials folder.
 - During the experiments the datasets were accessed through custom Python classes that appear in the respective datapipe.py files in modules.
 
+### Tutorials and Replication
+- An example for running batch experiments locally can be found in the root/notebooks/tutorials folder.
+- Examples for running batch experiments on Colab to reproduce the results can be found the in notebooks/Colab folder.
 >**Tip**: If you are unsure about what a function does, check its docstring with Python's help command.
 
 ## Data
