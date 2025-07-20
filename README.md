@@ -17,7 +17,7 @@ Modified versions of all the algorithms above are also provided when one has acc
     - [Tutorials and Replication](#tutorials-and-replication)
 - [Data](#data)
     - [Results](#results)
-    - [Pre-trained models](#pretrained)
+    - [Pre-trained models](#pre-trained-models)
 - [License](#license)
 
 
