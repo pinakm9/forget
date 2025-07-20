@@ -18,6 +18,7 @@ Modified versions of all the algorithms above are also provided when one has acc
 - [Data](#data)
     - [Results](#results)
     - [Pre-trained models](#pre-trained-models)
+    - [Training logs](#training-logs)
 - [License](#license)
 
 
@@ -137,6 +138,9 @@ root/data/CelebA/CelebA-Experiments and root/data/MNIST/MNIST-Experiments contai
 
 ### Pre-trained models
 root/data/CelebA/vae and root/data/MNIST/vae contain the original models (the ones that require unlearning). root/data/CelebA/cnn contains a trained classifier for CelebA for distinguishing between male and non-male images. root/data/MNIST/classifiers contain classifiers trained on MNIST for recognizing all digits. For the MNIST experiments we use the MNISTClassifier model rather than the EfficientMNISTClassifier model. The architectures for these models can be found in the respective vae.py and classifier.py files in modules.
+
+### Training logs
+A brief history of the training instances can be found in checkpoints/training_log.csv files. The column i Fraction documents the fraction of generated samples that belong to class i. Male faces are chosen to be in class 1 and vice versa. checkpoint folders on the same level as expr-i folders contain the averaged training history of all the training instances and the corresponding standard deviations.
 
 ## License
 This project is licensed under the Creative Commons Attribution 4.0 International License. See LICENSE for details.
