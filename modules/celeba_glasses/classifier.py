@@ -267,3 +267,50 @@ def inception_score(logits):
 
 
 
+def find_target_latent_direction(model, identifier, latent_dim=512, num_samples=25000, batch_size=128):
+    """
+    Find the latent direction of a target feature in a VAE model.
+
+    Parameters
+    ----------
+    model : VAE
+        The VAE model to use for generating images.
+    identifier : nn.Module
+        A binary classifier model to identify the target feature in the latent space.
+    latent_dim : int, optional
+        The dimensionality of the latent space. Default is 512.
+    num_samples : int, optional
+        The total number of samples to generate. Default is 25000.
+    batch_size : int, optional
+        The batch size to use when generating samples. Default is 128.
+
+    Returns
+    -------
+    latent_direction : torch.Tensor
+        The latent direction of the target class in the VAE model.
+    """
+    device = next(model.parameters()).device
+    identifier = identifier.to(device)
+
+    pos_latents = []
+    neg_latents = []
+
+    with torch.no_grad():
+        for _ in range(0, num_samples, batch_size):
+            current_batch_size = min(batch_size, num_samples - len(pos_latents) - len(neg_latents))
+            z = torch.randn(current_batch_size, latent_dim, device=device)
+            samples = model.decode(z)
+            logits = identifier(samples)
+            preds = (torch.sigmoid(logits) > 0.5).float().view(-1)
+
+            pos_latents.append(z[preds == 1])
+            neg_latents.append(z[preds == 0])
+
+    pos_mean = torch.cat(pos_latents, dim=0).mean(dim=0) 
+    neg_mean = torch.cat(neg_latents, dim=0).mean(dim=0) 
+
+    return pos_mean - neg_mean
+
+
+
+

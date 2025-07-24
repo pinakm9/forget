@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+from pytorch_msssim import ms_ssim
 import os, sys
 from torch.autograd import grad
 
@@ -214,3 +216,21 @@ def orthogonality_loss(model, identifier, retain_sample, forget_sample, kl_weigh
 
     return (torch.sum(gf * gr)**2 / (torch.sum(gf * gf) * torch.sum(gr * gr)))
 
+class MSSSIMLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, y):
+        """
+        Computes the MS-SSIM loss between two images already in [0,1] range.
+
+        Parameters:
+            x (torch.Tensor): Generated images, shape [B, C, H, W], values [0, 1].
+            y (torch.Tensor): Target images, shape [B, C, H, W], values [0, 1].
+
+        Returns:
+            loss (torch.Tensor): Scalar loss value.
+        """
+        similarity = ms_ssim(x, y, data_range=1.0, size_average=True)
+        loss = 1 - similarity
+        return loss
