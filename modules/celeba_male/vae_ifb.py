@@ -68,9 +68,9 @@ def get_processor(net, old_net, z_e, trainable_params, identifier, z_random, wei
         fz = old_net.decode(z)
         fz_hat = old_net.decode(z_hat)
 
-        l_recon = vl.L_recon(gz, fz, s)
-        l_unlearn = vl.L_unlearn(gz, fz_hat, s)
-        l_percep = vl.L_percep(gz, fz_hat, s) 
+        l_recon = vl.L_recon(gz, fz, s).mean()
+        l_unlearn = vl.L_unlearn(gz, fz_hat, s).mean()
+        l_percep = vl.L_percep(gz, fz_hat, s).mean() 
 
         loss = l_recon + 1. * (l_unlearn + l_percep)
         loss.backward()
@@ -99,7 +99,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     = vt.init(model, folder, num_steps, batch_size, latent_dim=latent_dim, save_steps=save_steps, collect_interval=collect_interval,\
            log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
            all_classes=all_classes, forget_class=forget_class, img_ext=img_ext, classifier_path=classifier_path, train_mode='ascent', data_path=data_path, max_data=max_data)
-    old_net = copy.deepcopy(model).to(device)
+    old_net = copy.deepcopy(net).to(device)
     # Freeze all parameters in the copied model
     for param in old_net.parameters():
         param.requires_grad = False 

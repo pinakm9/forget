@@ -29,12 +29,8 @@
             "description": "The device used for training."
         },
         "orthogonality_weight": {
-            "value": 1000.0,
-            "description": "Weight of the orthogonality loss."
-        },
-        "forget_weight": {
             "value": 0.0,
-            "description": "Weight of the forget loss."
+            "description": "Weight of the orthogonality loss."
         },
         "uniformity_weight": {
             "value": 1000.0,
