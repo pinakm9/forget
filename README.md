@@ -28,6 +28,7 @@ Code provided here was tested on Python 3.11.5. Code has been tested on macOS bu
 ```sh
 # Clone the repository
 git clone https://github.com/pinakm9/forget.git
+cd forget
 
 # Install dependencies
 pip install -r requirements.txt 
