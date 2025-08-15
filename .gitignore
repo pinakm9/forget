@@ -2,7 +2,7 @@ data-prelim/*
 notebooks/data/*
 data/CelebA/dataset/*
 data/CelebA/dataset-reconstructed/*
-data/MNIST/MNIST/*
+data/tiny-imagenet-200
 data/MNIST-138/*
 data/CelebA/vae/*
 papers/*
