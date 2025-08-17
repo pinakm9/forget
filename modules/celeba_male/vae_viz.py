@@ -12,8 +12,15 @@ import utility as ut
 import classifier
 import pandas as pd
 import vae 
-from PIL import Image
 
+from pathlib import Path 
+from functools import lru_cache 
+import asyncio 
+from typing import Union, Optional 
+
+import ipywidgets as widgets
+import IPython.display as display 
+from PIL import Image 
 
 def generate_random_samples(model, num_samples=25, latent_dim=512):
     """
@@ -478,3 +485,189 @@ def summarize_training(folder, window=1, total_duration=15):
     config = ut.get_config(folder)
     if isinstance(total_duration, int):
         ut.stitch(f"{folder}/samples", config["experiment"]["img_ext"]["value"], f"{folder}/samples/sample_evolution.mp4", total_duration, delete_images=True)
+
+
+
+
+def image_sequence_viewer(
+    img_dir: Union[str, Path],
+    *,
+    method: str = "play",            # "play" or "async"
+    interval_ms: int = 120,          # frame delay for play/async
+    loop: bool = True,               # loop when reaching the end (async mode)
+    max_side: int = 1000,            # downscale longest side for speed
+    start_index: Optional[int] = None,  # integer filename to start at (e.g., 0)
+):
+    """
+    Build a viewer for integer-indexed images in a folder (e.g., 0.png, 1.jpg, 2.png, ...).
+
+    Parameters
+    ----------
+    img_dir : str | Path
+        Folder containing images with integer stems.
+    method : "play" | "async"
+        "play" uses widgets.Play (simplest). "async" uses a Start/Stop button with speed & loop controls.
+    interval_ms : int
+        Frame delay in milliseconds.
+    loop : bool
+        Whether to loop when reaching the last frame (async method only).
+    max_side : int
+        If an image is larger than this on its longest side, it is downscaled for responsiveness.
+    start_index : int | None
+        If provided and present among filenames, the viewer starts at that index.
+
+    Returns
+    -------
+    ipywidgets.VBox
+        A container you can display() to show the UI.
+    """
+    img_dir = Path(img_dir)
+    allowed = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
+    idx2path = {}
+
+    for p in img_dir.iterdir():
+        if p.suffix.lower() in allowed:
+            try:
+                idx2path[int(str(p).split('/')[-1].split('.')[0].split('_')[-1])] = p
+            except ValueError:
+                pass
+
+    if not idx2path:
+        raise FileNotFoundError(
+            f"No integer-indexed images found in {img_dir!s}. "
+            f"Expected files like '0.png', '1.jpg', ..."
+        )
+
+    indices = sorted(idx2path)
+    # slider runs over positions [0 .. len(indices)-1], so gaps in indices are fine
+    def start_pos_from_index(sidx: Optional[int]) -> int:
+        if sidx is None:
+            return 0
+        try:
+            return indices.index(sidx)
+        except ValueError:
+            return 0
+
+    pos = widgets.IntSlider(
+        value=start_pos_from_index(start_index),
+        min=0,
+        max=len(indices) - 1,
+        step=1,
+        description="frame",
+        continuous_update=False,
+    )
+    info = widgets.HTML()
+    out = widgets.Output()
+
+    @lru_cache(maxsize=256)
+    def load(i: int, max_side_local: int = max_side):
+        im = Image.open(idx2path[i]).convert("RGB")
+        w, h = im.size
+        m = max(w, h)
+        if m > max_side_local:
+            s = max_side_local / m
+            im = im.resize((int(w * s), int(h * s)))
+        return im
+
+    def render(_=None):
+        i = indices[pos.value]
+        info.value = f"<b>Index:</b> {i} &nbsp;&nbsp; <b>File:</b> {idx2path[i].name}"
+        with out:
+            out.clear_output(wait=True)
+            plt.figure(figsize=(6, 6))
+            plt.imshow(load(i))
+            plt.axis("off")
+            plt.show()
+
+    pos.observe(render, names="value")
+    render()  # initial
+
+    if method == "play":
+        play = widgets.Play(
+            interval=interval_ms, value=pos.value, min=pos.min, max=pos.max, step=1
+        )
+        widgets.jslink((play, "value"), (pos, "value"))
+        controls = widgets.HBox([play, pos])
+        ui = widgets.VBox([controls, info, out])
+        return ui
+
+    elif method == "async":
+        ms = widgets.IntSlider(
+            value=int(interval_ms), min=20, max=2000, step=10, description="ms/frame"
+        )
+        loop_chk = widgets.Checkbox(value=bool(loop), description="loop")
+        start_btn = widgets.Button(description="▶ Start", button_style="primary", icon="play")
+        stop_btn = widgets.Button(description="⏸ Stop", button_style="warning", icon="pause", disabled=True)
+
+        anim_task = {"task": None}
+
+        async def animate():
+            start_btn.disabled = True
+            stop_btn.disabled = False
+            try:
+                while True:
+                    if pos.value >= pos.max:
+                        if loop_chk.value:
+                            pos.value = pos.min
+                        else:
+                            break
+                    else:
+                        pos.value += 1
+                    await asyncio.sleep(ms.value / 1000.0)
+            finally:
+                start_btn.disabled = False
+                stop_btn.disabled = True
+                anim_task["task"] = None
+
+        def on_start(_):
+            if anim_task["task"] is None:
+                anim_task["task"] = asyncio.create_task(animate())
+
+        def on_stop(_):
+            t = anim_task["task"]
+            if t is not None:
+                t.cancel()
+
+        start_btn.on_click(on_start)
+        stop_btn.on_click(on_stop)
+
+        controls = widgets.HBox([start_btn, stop_btn, ms, loop_chk, pos])
+        ui = widgets.VBox([controls, info, out])
+        return ui
+
+    else:
+        raise ValueError("method must be 'play' or 'async'")
+    
+
+
+
+
+
+
+
+def plot(images, title, saveas=False):
+    num_samples = len(images)
+    grid_size = int(np.ceil(np.sqrt(num_samples)))  # ceil to handle non-square numbers
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(6, 6))
+    axes = axes.flatten()
+
+    for idx in range(num_samples):
+        img = images[idx]
+        # Ensure channel-last format (H, W, 3)
+        if img.shape[0] == 3 and img.ndim == 3:
+            img = np.transpose(img, (1, 2, 0))  # (C, H, W) -> (H, W, C)
+        axes[idx].imshow(img)
+        axes[idx].axis('off')
+
+    # Hide extra axes
+    for idx in range(num_samples, len(axes)):
+        axes[idx].axis('off')
+
+    fig.suptitle(title, fontsize=16)
+    plt.tight_layout()
+    if not saveas:
+        plt.show()
+    else:
+        plt.savefig(saveas, bbox_inches="tight", dpi=300)
+    plt.close(fig)
+

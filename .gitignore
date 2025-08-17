@@ -21,4 +21,5 @@ talk/*
 !data/CelebA/cnn/cnn_10.pth
 !data/MNIST/vae/vae_200.pth
 !data/MNIST/classifiers/MNISTClassifier.pth
+notebooks/talk/mnist/*
 
