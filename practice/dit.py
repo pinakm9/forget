@@ -36,6 +36,7 @@ def load_DiT(folder, device):
     model.load_state_dict(state_dict); model.eval()
 
     vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse").to(device)
+    vae.eval()
     return model, vae
 
 
@@ -83,6 +84,8 @@ def fix_diffusion_fp32(diffusion):
             if changed:
                 setattr(diffusion, k, new)
     return diffusion
+
+
 
 # --- 2) Patch the exact gaussian_diffusion module used by THIS diffusion object ---
 def patch_extract_into_tensor_fp32(diffusion):
@@ -242,11 +245,6 @@ def generate_uncond(model, vae, diffusion, n_samples, device, show=True):
     # Initial noise in latent space
     z = torch.randn(n_samples, 4, latent_size, latent_size, device=device)
 
-    # Ensure any float64 numpy arrays in diffusion are float32 (some envs load them as float64)
-    for k, v in list(diffusion.__dict__.items()):
-        if isinstance(v, np.ndarray) and v.dtype == np.float64:
-            diffusion.__dict__[k] = v.astype(np.float32)
-
     with torch.no_grad():
         latents = diffusion.p_sample_loop(
             model.forward,                               # no CFG path; plain forward
@@ -385,3 +383,145 @@ def encode_to_latents(
 
 
 
+
+
+
+
+def generate_cfg_steady(model, vae, diffusion, class_id, n_samples, cfg_scale, device, noise, show=True):
+    """
+    Generates images from a DiT-XL/2 model using the CFG sampling method
+    with a fixed noise vector.
+
+    Parameters
+    ----------
+    model : DiT_models
+        The DiT-XL/2 model.
+    vae : AutoencoderKL
+        The AutoencoderKL model.
+    diffusion : dict
+        The diffusion object.
+    class_id : int
+        The class ID of the images to generate.
+    n_samples : int
+        The number of images to generate.
+    cfg_scale : float
+        The CFG scale.
+    device : torch.device
+        The device on which to generate the images.
+    noise : torch.Tensor
+        The fixed noise vector.
+    show : bool, optional
+        If True, displays the generated images. Default is True.
+
+    Returns
+    -------
+    imgs : torch.Tensor
+        The generated images of shape (n_samples, 3, 256, 256).
+    """
+    image_size = 256
+    latent_size = image_size // 8
+    # labels: [cond... , null...]
+    y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
+    y_null = torch.full((n_samples,), 1000,  device=device, dtype=torch.long) # null class
+    y = torch.cat([y_cond, y_null], dim=0)                         # (2n,)
+    
+    z = noise #torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
+    with torch.no_grad():
+        latents = diffusion.p_sample_loop(
+            model.forward_with_cfg, z.shape, z,
+            clip_denoised=False, model_kwargs=dict(y=y, cfg_scale=cfg_scale),
+            progress=True, device=device
+        )
+        sample = latents / 0.18215
+        imgs = vae.decode(sample).sample  # (2n_samples,3,256,256)
+        imgs = imgs[:n_samples]
+
+    if show:
+        # visualize a grid
+        rows = math.ceil(math.sqrt(n_samples))
+        cols = math.ceil(n_samples / rows)
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
+        axes = np.atleast_1d(axes).ravel()
+
+        for i in range(rows * cols):
+            axes[i].axis("off")
+            if i < n_samples:
+                img_vis = imgs[i].detach().float().clamp(-1, 1)
+                img_vis = (img_vis + 1) * 0.5
+                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
+                axes[i].imshow(img_np)
+
+        plt.tight_layout()
+        plt.show()
+    
+    return imgs
+
+
+
+
+def generate_uncond_steady(model, vae, diffusion, n_samples, device, noise,show=True):
+    """
+    Unconditional generation with a class-conditioned DiT by feeding only the null label.
+
+    Parameters
+    ----------
+    model : DiT_models
+        The DiT model (e.g., DiT-XL/2) with num_classes=1000.
+    vae : AutoencoderKL
+        Decoder used to map latents -> images.
+    diffusion : object
+        Diffusion sampler with p_sample_loop(...).
+    n_samples : int
+        Number of images to generate.
+    device : torch.device
+        CUDA or CPU device.
+    noise : torch.Tensor
+        Initial noise in latent space of shape (n_samples, 4, latent_size, latent_size).
+    show : bool, optional
+        If True, shows a grid of generated images.
+
+    Returns
+    -------
+    imgs : torch.Tensor
+        Generated images, shape (n_samples, 3, image_size, image_size), range ~[-1, 1].
+    """
+    image_size=256
+    latent_size = image_size // 8
+
+    # Use only null labels for unconditional sampling
+    y = torch.full((n_samples,), 1000, device=device, dtype=torch.long) # null_id = 1000
+
+    # Initial noise in latent space
+    z = noise # torch.randn(n_samples, 4, latent_size, latent_size, device=device)
+
+    with torch.no_grad():
+        latents = diffusion.p_sample_loop(
+            model.forward,                               # no CFG path; plain forward
+            (n_samples, 4, latent_size, latent_size),    # explicit shape
+            z,
+            clip_denoised=False,
+            model_kwargs=dict(y=y),                      # supply null labels
+            progress=True,
+            device=device
+        )
+        samples = latents / 0.18215
+        imgs = vae.decode(samples).sample  # (n_samples, 3, H, W), ~[-1, 1]
+
+    if show:
+        rows = math.ceil(math.sqrt(n_samples))
+        cols = math.ceil(n_samples / rows)
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
+        axes = np.atleast_1d(axes).ravel()
+
+        for i in range(rows * cols):
+            axes[i].axis("off")
+            if i < n_samples:
+                img_vis = imgs[i].detach().float().clamp(-1, 1)
+                img_vis = (img_vis + 1) * 0.5
+                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
+                axes[i].imshow(img_np)
+
+        plt.tight_layout()
+        plt.show()
+
+    return imgs
