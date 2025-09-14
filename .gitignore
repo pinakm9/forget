@@ -5,7 +5,8 @@ data/CelebA/dataset-reconstructed/*
 data/tiny-imagenet-200
 data/MNIST-138/*
 data/CelebA/vae/*
-data/ImageNet-1k/DiT-XL-2
+data/ImageNet-1k/DiT-XL-2/*
+data/ImageNet-1k/2012/*
 papers/*
 */temp/*
 */__pycache__/*
@@ -23,5 +24,6 @@ talk/*
 !data/MNIST/vae/vae_200.pth
 !data/MNIST/classifiers/MNISTClassifier.pth
 notebooks/talk/mnist/*
+practice/pretrained_models/*
 
 
