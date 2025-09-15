@@ -353,3 +353,87 @@ def get_file_count(folder_path):
         name for name in os.listdir(folder_path)
         if os.path.isfile(os.path.join(folder_path, name))
     ])
+
+
+
+
+def models_equal(
+    m1: torch.nn.Module,
+    m2: torch.nn.Module,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+    check_dtype: bool = True,
+    check_requires_grad: bool = False,
+    verbose: bool = True,
+) -> bool:
+    """
+    Check if two models (m1 and m2) have the same parameters.
+
+    Parameters
+    ----------
+    m1 : torch.nn.Module
+        The first model to compare.
+    m2 : torch.nn.Module
+        The second model to compare.
+    rtol : float, optional
+        The relative tolerance when comparing floating point tensors. Defaults to 1e-5.
+    atol : float, optional
+        The absolute tolerance when comparing floating point tensors. Defaults to 1e-8.
+    check_dtype : bool, optional
+        If True, also compare the dtypes of the tensors. Defaults to True.
+    check_requires_grad : bool, optional
+        If True, also compare the requires_grad flags of the model parameters. Defaults to False.
+    verbose : bool, optional
+        If True, print out the differences between the models. Defaults to True.
+
+    Returns
+    -------
+    bool
+        Whether the two models have the same parameters.
+    """
+    sd1 = m1.state_dict()
+    sd2 = m2.state_dict()
+
+    ok = True
+    # --- key set check ---
+    k1, k2 = set(sd1.keys()), set(sd2.keys())
+    only1, only2 = sorted(k1 - k2), sorted(k2 - k1)
+    if only1 or only2:
+        ok = False
+        if verbose:
+            if only1: print("[diff] keys only in m1:", only1)
+            if only2: print("[diff] keys only in m2:", only2)
+
+    # --- per-tensor checks ---
+    for k in sorted(k1 & k2):
+        t1, t2 = sd1[k], sd2[k]
+        if t1.shape != t2.shape:
+            ok = False
+            if verbose: print(f"[diff] shape mismatch @ {k}: {tuple(t1.shape)} vs {tuple(t2.shape)}")
+            continue
+        if check_dtype and t1.dtype != t2.dtype:
+            ok = False
+            if verbose: print(f"[diff] dtype mismatch @ {k}: {t1.dtype} vs {t2.dtype}")
+        # move to same device (CPU) for a stable compare without side effects
+        a, b = t1.detach().cpu(), t2.detach().cpu()
+        # exact vs tolerant comparison depending on dtype
+        equal = torch.allclose(a, b, rtol=rtol, atol=atol) if a.is_floating_point() else torch.equal(a, b)
+        if not equal:
+            ok = False
+            if verbose:
+                max_abs = (a - b).abs().max().item() if a.is_floating_point() else None
+                print(f"[diff] value mismatch @ {k}; max_abs={max_abs}")
+
+    # --- optional: requires_grad flags on parameters ---
+    if check_requires_grad:
+        p1 = dict(m1.named_parameters())
+        p2 = dict(m2.named_parameters())
+        for k in sorted(set(p1.keys()) & set(p2.keys())):
+            if p1[k].requires_grad != p2[k].requires_grad:
+                ok = False
+                if verbose:
+                    print(f"[diff] requires_grad mismatch @ {k}: {p1[k].requires_grad} vs {p2[k].requires_grad}")
+
+    if verbose:
+        print("==> models equal:", ok)
+    return ok

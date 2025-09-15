@@ -199,6 +199,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     A function that takes in step, losses, elapsed_time, and logs them to the CSV file.
     """
     device = vae.device
+    gen_kwargs['class_id'] = forget_class
     gen_kwargs['device'] = device
     gen_kwargs['show'] = False
     gen_kwargs['noise'] = z_random
@@ -207,7 +208,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     # @ut.timer
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
-            gen_imgs = dit.generate_cfg_steady(model, vae, diffusion, forget_class, **gen_kwargs)
+            gen_imgs = dit.generate_cfg_steady(model, vae, diffusion, **gen_kwargs)
             logits = identifier(gen_imgs).logits
             class_count = cl.count_from_logits(logits, forget_class) / logits.shape[0]
    

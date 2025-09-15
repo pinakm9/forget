@@ -11,11 +11,13 @@ import classifier as cl
 import datapipe, csv
 from torchvision.utils import save_image
 import train as tt
+import save as sv
+import dit
 
 
 
 class BatchExperiment:
-    def __init__(self, train_func, train_kwargs, n_exprs):
+    def __init__(self, train_func, train_kwargs, n_exprs, **gen_kwargs):
         """
         Constructor for BatchExperiment.
 
@@ -31,7 +33,8 @@ class BatchExperiment:
 
         self.train_func = train_func
         self.train_kwargs = train_kwargs
-        self.n_exprs = n_exprs  
+        self.n_exprs = n_exprs 
+        self.gen_kwargs = gen_kwargs
 
     @ut.timer
     def run(self):
@@ -68,8 +71,18 @@ class BatchExperiment:
         """
 
         return f'{self.train_kwargs["folder"]}/expr-{index}'
+    
 
-    def summarize(self, threhold=2e-2, num_fid_samples=25000, device='cuda', batch_size=256):
+
+    def set_models(self):
+        self.model, self.vae = tt.init_model(self.train_kwargs['model_path'], self.train_kwargs['device'])
+        self.diffusion = dit.load_diffusion(self.train_kwargs['diffusion_steps'])
+
+    def del_model(self):
+        del self.model
+        del self.vae
+
+    def summarize(self, threhold=2e-2, num_fid_samples=25000, batch_size=256):
         """
         Summarize the training curves of all experiments and save the statistics to summary.json and summary_std.json
 
@@ -79,8 +92,6 @@ class BatchExperiment:
             The threshold to find the stable stopping point, by default 2e-2
         num_fid_samples : int, optional 
             The number of samples to use for FID computation, by default 25000
-        device : str or torch.device, optional
-            The device to use for computation, by default 'cuda'
         batch_size : int, optional
             The batch size to use for FID computation, by default 256
 
@@ -88,6 +99,7 @@ class BatchExperiment:
         -------
         None
         """
+        self.set_models()
         if not os.path.exists(f'{self.train_kwargs["folder"]}/checkpoints'):
             os.makedirs(f'{self.train_kwargs["folder"]}/checkpoints')
 
@@ -107,7 +119,7 @@ class BatchExperiment:
         arr = np.zeros(self.n_exprs)
         for k, column in enumerate(df0.columns):
             for i in range(self.n_exprs):
-                j = self.find_stable_stopping_point(data[i][:, int(9 + self.train_kwargs["forget_class"])], threhold)
+                j = self.find_stable_stopping_point(data[i][:, 4], threhold)
                 arr[i] = data[i, j, k]
             summary[column] = arr.mean() 
             summary_std[column] = arr.std() 
@@ -126,7 +138,7 @@ class BatchExperiment:
                                       summary["Time/Step"] **2 * summary_std["Step"] **2 +\
                                       summary_std["Step"] **2 * summary_std["Time/Step"] **2)
         
-        summary["Original FID"] = self.original_fid(num_fid_samples, device, batch_size)
+        summary["Original FID"] = self.original_fid(num_fid_samples, self.train_kwargs["device"], batch_size)
 
 
         with open(f"{self.train_kwargs['folder']}/summary.json", 'w') as file:
@@ -139,6 +151,8 @@ class BatchExperiment:
             json.dump(ut.get_config(self.get_folder(0)), file, indent=2)
 
         viz.evolve(self.train_kwargs['folder'])
+
+        self.del_model()
 
     def summarize_wo_fid(self, threhold=2e-2):
         """
@@ -171,7 +185,7 @@ class BatchExperiment:
         arr = np.zeros(self.n_exprs)
         for k, column in enumerate(df0.columns):
             for i in range(self.n_exprs):
-                j = self.find_stable_stopping_point(data[i][:, int(9 + self.train_kwargs["forget_class"])], threhold)
+                j = self.find_stable_stopping_point(data[i][:, 4], threhold)
                 arr[i] = data[i, j, k]
             summary[column] = arr.mean() 
             summary_std[column] = arr.std() 
@@ -232,16 +246,14 @@ class BatchExperiment:
 
         if isinstance(device, str):
             device = torch.device(device)
-        self.train_kwargs['data_path']
-        dataloader = datapipe.CelebAData(img_path=self.train_kwargs['data_path']).get_dataloader(n_samples)
+        dataloader = datapipe.get_dataloader_multi(self.train_kwargs['data_path'], self.train_kwargs['exchange_classes'],\
+                                             self.train_kwargs['imagenet_json_path'], batch_size=n_samples)
         real_images, _ = next(iter(dataloader))
         real_images = real_images.to(device)
+        self.gen_kwargs["n_samples"] = n_samples
+        self.gen_kwargs["batch_size"] = batch_size
         
-        # load models
-        model = tt.init_model(model=self.train_kwargs['model'], latent_dim=self.train_kwargs['latent_dim'], device=device)
-
-        with torch.no_grad():
-            gen_images = model.decode(torch.randn(real_images.shape[0], self.train_kwargs['latent_dim']).to(device))
+        gen_images = dit.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
         
         return self.compute_fid(real_images, gen_images, batch_size)
 
@@ -290,14 +302,15 @@ class BatchExperiment:
         each experiment to free up memory. The function is decorated with @ut.timer, so it will print out the 
         time taken for execution.
         """
-
+        self.set_models()
         if isinstance(device, str):
             device = torch.device(device)
-        # attr_path = self.train_kwargs['data_path'] + '/list_attr_celeba.csv'
-        dataloader = datapipe.CelebAData(img_path=self.train_kwargs['data_path']).get_dataloader(n_samples)
+        dataloader = datapipe.get_dataloader_multi(self.train_kwargs['data_path'], self.train_kwargs['exchange_classes'],\
+                                             self.train_kwargs['imagenet_json_path'], batch_size=n_samples)
         real_images, _ = next(iter(dataloader))
         real_images = real_images.to(device)
-        # identifier = cl.get_classifier(self.train_kwargs['classifier_path'], device=device)
+        self.gen_kwargs["n_samples"] = n_samples
+        self.gen_kwargs["batch_size"] = batch_size
         
         # Prepare to collect FID scores
         results = [("expr-id", "FID")]
@@ -315,7 +328,7 @@ class BatchExperiment:
         with open(self.train_kwargs['folder'] + '/fid.csv', mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerows(results)
-    
+        self.del_model()
     
     
     @ut.timer
@@ -351,6 +364,7 @@ class BatchExperiment:
         """
 
         device = real_images.device
+        self.gen_kwargs["batch_size"] = batch_size
 
         # Find the latest checkpoint
         checkpoints = glob.glob(os.path.join(folder, 'checkpoints', '*.pth'))
@@ -364,14 +378,10 @@ class BatchExperiment:
         checkpoint = checkpoints[-1]
 
         # Load model
-        model = torch.load(checkpoint, weights_only=False, map_location=device)
-        model.to(device)
-        model.eval()
-
+        sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
+        
         # Generate images
-        with torch.no_grad():
-            z = torch.randn(real_images.size(0), self.train_kwargs['latent_dim'], device=device)
-            gen_images = model.decode(z)
+        gen_images = dit.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
 
         # Compute FID from tensors
         fid_score = self.compute_fid(real_images, gen_images, batch_size)

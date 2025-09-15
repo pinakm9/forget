@@ -525,3 +525,66 @@ def generate_uncond_steady(model, vae, diffusion, n_samples, device, noise,show=
         plt.show()
 
     return imgs
+
+
+
+
+
+
+def generate_cfg_batched(
+    model, vae, diffusion,
+    class_id: int,
+    n_samples: int,
+    cfg_scale: float,
+    device: torch.device,
+    batch_size: int = 8,
+    show: bool = False,
+):
+    """
+    Batched CFG sampling for DiT-XL/2 (+ AutoencoderKL) at 256x256.
+
+    Returns
+    -------
+    imgs : Tensor, shape (n_samples, 3, 256, 256), in [-1, 1]
+    """
+    image_size = 256
+    latent_size = image_size // 8  # 32 for 256x256
+    out = []
+
+    # choose autocast settings per device
+    dev_type = str(device)  # "cuda", "mps", or "cpu"
+    ac_dtype = torch.float16 if dev_type in ("cuda", "mps") else torch.bfloat16
+
+    with torch.no_grad(), torch.amp.autocast(device_type=dev_type, dtype=ac_dtype, enabled=True):
+        remaining = n_samples
+        while remaining > 0:
+            b = min(batch_size, remaining)
+
+            # labels: [cond ... , null ...]  (2b,)
+            y_cond = torch.full((b,), class_id, device=device, dtype=torch.long)
+            y_null = torch.full((b,), 1000,    device=device, dtype=torch.long)  # null class
+            y = torch.cat([y_cond, y_null], dim=0)
+
+            # initial noise z: (2b, 4, 32, 32)
+            z = torch.randn(2*b, 4, latent_size, latent_size, device=device)
+
+            # reverse process
+            latents = diffusion.p_sample_loop(
+                model.forward_with_cfg, z.shape, z,
+                clip_denoised=False,
+                model_kwargs=dict(y=y, cfg_scale=cfg_scale),
+                progress=False,
+                device=device
+            )
+
+            # decode
+            sample = latents / 0.18215
+            imgs_b = vae.decode(sample).sample
+            imgs_b = imgs_b[:b]                   # keep only the conditioned half
+            out.append(imgs_b)
+
+            remaining -= b
+
+    imgs = torch.cat(out, dim=0)  # (n_samples, 3, 256, 256)
+
+    return imgs.to(torch.float32)

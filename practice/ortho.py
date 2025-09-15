@@ -1,10 +1,12 @@
 import train as tt 
-import torch, time
+import torch, time, csv
 import loss as ls
 from torch.autograd import grad
 from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
+import classifier as cl
+import dit
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
@@ -41,12 +43,51 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
         optim.step()
 
         elapsed_time = time.time() - start_time
+        # print("orth is", gf@gr, orth)
 
-        return loss.item(),  elapsed_time
+        return loss.item(),  elapsed_time, orth.item()
     return process_batch
 
 
+def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget_class, z_random, **gen_kwargs):
+    """
+    Return a function that logs a single row of results  (loss, time, and class counts) to the CSV file.
 
+    Parameters:
+    model (nn.Module): The DiT model.
+    vae (nn.Module): The VAE model.
+    diffusion (nn.Module): The diffusion model.
+    identifier (nn.Module): The image classifier.
+    csv_file (str): Path to the CSV file.
+    log_interval (int): Interval at which to log.
+    forget_class (int): The class to forget.
+    z_random (torch.Tensor): The random noise vector.
+    **gen_kwargs (dict): Additional keyword arguments to pass to dit.generate_cfg.
+
+    Returns:
+    A function that takes in step, losses, elapsed_time, and logs them to the CSV file.
+    """
+    device = vae.device
+    gen_kwargs['class_id'] = forget_class
+    gen_kwargs['device'] = device
+    gen_kwargs['show'] = False
+    gen_kwargs['noise'] = z_random
+    gen_kwargs['n_samples'] = z_random.shape[0] // 2
+  
+    # @ut.timer
+    def log_results(step, losses, elapsed_time):
+        if step % log_interval == 0:
+            gen_imgs = dit.generate_cfg_steady(model, vae, diffusion, **gen_kwargs)
+            logits = identifier(gen_imgs).logits
+            class_count = cl.count_from_logits(logits, forget_class) / logits.shape[0]
+   
+
+            # Write row to the CSV file
+            with open(csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([step] + [losses[0]] + [elapsed_time] + [1 - class_count, class_count] + [losses[1]])
+            return gen_imgs
+    return log_results
 
 
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10,\
@@ -113,6 +154,10 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
            freeze_K=freeze_K, unfreeze_last=unfreeze_last)
+    # Add a new column to the CSV file
+    with open(csv_file, "r+") as f:
+        hdr = f.readline().strip() + ",Orthogonality Loss"
+        f.seek(0); f.write(hdr + "\n"); f.truncate()
     process_batch = get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight) 
     if not getattr(process_batch, "_ckpt_patched", False):
         _orig_checkpoint = _cp.checkpoint
@@ -129,7 +174,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
         _cp.checkpoint = _checkpoint_no_reentrant
         _cp.checkpoint_sequential = _ckpt_seq_no_reentrant
         process_batch._ckpt_patched = True   
-    log_results = tt.get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget_class, z_random, **gen_kwargs)
+    log_results = get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget_class, z_random, **gen_kwargs)
     save = tt. get_saver(model, save_steps, checkpoint_dir, epoch_length)
     collect_samples = tt.get_collector(sample_dir, collect_interval, grid_size, identifier, img_ext)   
 
@@ -144,8 +189,8 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             img_retain, label_retain = batch_retain[0].to(device), batch_retain[1].to(device)
             img_forget, label_forget = batch_forget[0].to(device), batch_forget[1].to(device)
             # -- Process a single batch
-            loss, elapsed_time = process_batch(img_retain, label_retain, img_forget, label_forget)
-            generated_img = log_results(step=global_step, losses=[loss], elapsed_time=elapsed_time)
+            loss, elapsed_time, orth = process_batch(img_retain, label_retain, img_forget, label_forget)
+            generated_img = log_results(step=global_step, losses=[loss, orth], elapsed_time=elapsed_time)
             save(step=global_step)
             collect_samples(generated_img, step=global_step)
             if global_step >= num_steps:

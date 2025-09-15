@@ -57,7 +57,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     unfreeze_last : bool, optional
         Whether to unfreeze the last layer during training. Defaults to False.
     **gen_kwargs : dict, optional
-        Additional keyword arguments to pass to `get_processor`, `get_logger`, `get_saver`, and `get_collector`.
+        Additional keyword arguments to pass to the generator.
 
     Returns
     -------

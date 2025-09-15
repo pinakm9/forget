@@ -25,5 +25,7 @@ talk/*
 !data/MNIST/classifiers/MNISTClassifier.pth
 notebooks/talk/mnist/*
 practice/pretrained_models/*
+practice/*/
+!practice/*
 
 
