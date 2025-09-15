@@ -9,6 +9,7 @@ import numpy as np
 import datapipe
 from tqdm import tqdm
 import viz
+import torch.utils.checkpoint as _cp
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
                 uniformity_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
@@ -356,7 +357,25 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
 
 
 
+    
+def patch_checkpoint_nonreentrant():
+    if getattr(_cp, "_nonreentrant_patched", False):
+        return
 
+    _orig_checkpoint = _cp.checkpoint
+    _orig_ckpt_seq   = _cp.checkpoint_sequential
+
+    def _checkpoint_no_reentrant(*args, **kwargs):
+        kwargs.setdefault("use_reentrant", False)
+        return _orig_checkpoint(*args, **kwargs)
+
+    def _ckpt_seq_no_reentrant(*args, **kwargs):
+        kwargs.setdefault("use_reentrant", False)
+        return _orig_ckpt_seq(*args, **kwargs)
+
+    _cp.checkpoint = _checkpoint_no_reentrant
+    _cp.checkpoint_sequential = _ckpt_seq_no_reentrant
+    _cp._nonreentrant_patched = True
 
 
 

@@ -49,7 +49,7 @@
             "description": "File extension for sample images."
         },
         "collect_interval": {
-            "value": 1300,
+            "value": 10,
             "description": "Frequency of collecting samples."
         },
         "log_interval": {

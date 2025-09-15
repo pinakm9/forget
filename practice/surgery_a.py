@@ -6,24 +6,33 @@ from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
 
-
 def get_processor(model, vae, diffusion, device, optim, trainable_params):
     device = vae.device
     # amp = (device.type == "cuda")
     # scaler = torch.cuda.amp.GradScaler(enabled=amp)
     # @ut.timer
-    def process_batch(img_f, label_f):
+    def process_batch(img_r, label_r, img_f, label_f):
         # Forward pass
         start_time =  time.time()
         # net.eval()
         
         optim.zero_grad(set_to_none=True)
         # with torch.cuda.amp.autocast(enabled=amp):
+        loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
         loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
 
         gf = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_f,
                                                                    inputs=trainable_params,
                                                                    retain_graph=True)])
+        gr = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_r,
+                                                                   inputs=trainable_params,
+                                                                   retain_graph=True)])
+    
+        # Remove the component of gr that is parallel to gf
+        gfgr = gf @ gr
+        grgr = gr @ gr
+
+        gf -= gr * gfgr / grgr
 
         # Reassign gradients to the parameters.
         idx = 0
@@ -31,15 +40,13 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
             numel = p.numel()
             p.grad = -gf[idx: idx + numel].view(p.shape)
             idx += numel 
-        # (optimional) grad clip:
-        # scaler.unscale_(optim); torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
         optim.step()
 
         elapsed_time = time.time() - start_time
 
-        return loss_f.item(),  elapsed_time
+        return loss_r.item(),  elapsed_time
     return process_batch
-
 
 
 
@@ -71,7 +78,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     uniformity_weight : float, optional
         Weight for the uniformity loss. Defaults to 0.
     orthogonality_weight : float, optional        
-        Weight for the orthogonality loss. Defaults to None.
+        Weight for the orthogonality loss. Defaults to 1000.
     exchange_classes : list, optional
         List of class indices to exchange during training. Defaults to [208].
     forget_class : int, optional
@@ -135,11 +142,12 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     # ---------------------------------------------------
     global_step, done = 0, False
     for _ in tqdm(range(1, epochs + 1), desc="Epochs"):
-        for batch_forget in dataloader['forget']:
+        for batch_retain, batch_forget in zip(dataloader['retain'], dataloader['forget']):
             global_step += 1
+            img_retain, label_retain = batch_retain[0].to(device), batch_retain[1].to(device)
             img_forget, label_forget = batch_forget[0].to(device), batch_forget[1].to(device)
             # -- Process a single batch
-            loss, elapsed_time = process_batch(img_forget, label_forget)
+            loss, elapsed_time = process_batch(img_retain, label_retain, img_forget, label_forget)
             generated_img = log_results(step=global_step, losses=[loss], elapsed_time=elapsed_time)
             save(step=global_step)
             collect_samples(generated_img, step=global_step)

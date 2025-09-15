@@ -104,27 +104,35 @@ def compute_features(images, batch_size=64, device=None):
 
 
 
-def FID(real_imgs: np.ndarray,
-        gen_imgs: np.ndarray,
+def FID(real_imgs, gen_imgs,
         compute_features=compute_features,
-        eps: float = 1e-6) -> float:
+        eps: float = 1e-6, batch_size: int = 64, device='cuda') -> float:
     """
-    Compute Fréchet Inception Distance (FID) between two image sets.
+    Computes the Frechet Inception Distance (FID) between two sets of images.
 
-    Args:
-        real_imgs: np.ndarray of shape (N1, H, W, 3), dtype uint8 or float.
-        gen_imgs:  np.ndarray of shape (N2, H, W, 3), dtype uint8 or float.
-        compute_features: function(images: np.ndarray) -> np.ndarray of shape (N, D)
-            Should extract ImageNet Inception-v3 pool3 features (D=2048) or equivalent.
-            It must handle any needed resizing/normalization internally.
-        eps: small diagonal jitter for numerical stability.
+    Parameters
+    ----------
+    real_imgs : torch.Tensor
+        The real images to use for FID computation.
+    gen_imgs : torch.Tensor
+        The generated images to use for FID computation.
+    compute_features : callable, optional
+        A function that computes features from images. Defaults to `compute_features`.
+    eps : float, optional
+        A small value to add to the covariance matrices for numerical stability. Defaults to 1e-6.
+    batch_size : int, optional
+        The batch size to use for feature extraction. Defaults to 64.
+    device : str, optional
+        The device to use for feature extraction. Defaults to 'cuda'.
 
-    Returns:
-        FID score (float).
+    Returns
+    -------
+    float
+        The FID score between the real and generated images.
     """
      # 1) Extract features (-> numpy)
-    f_r = compute_features(real_imgs).detach().cpu().numpy()
-    f_g = compute_features(gen_imgs).detach().cpu().numpy()
+    f_r = compute_features(real_imgs, batch_size, device).detach().cpu().numpy()
+    f_g = compute_features(gen_imgs, batch_size, device).detach().cpu().numpy()
 
     # 2) Means & covariances
     mu_r = np.mean(f_r, axis=0)
