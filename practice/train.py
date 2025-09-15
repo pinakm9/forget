@@ -156,9 +156,6 @@ def get_processor(model, vae, diffusion, device, optim):
     scaler = torch.cuda.amp.GradScaler(enabled=amp)
     # @ut.timer
     def process_batch(real_img, label):
-        """
-        Perform a forward + backward pass on a single batch, returning the individual loss terms.
-        """
         # Forward pass
         start_time =  time.time()
         # net.eval()
@@ -308,12 +305,10 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
     os.makedirs(sample_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
     dataloader = {'original': datapipe.get_dataloader_multi(root=data_path, class_ids=exchange_classes, imagenet_json_path=imagenet_json_path, batch_size=batch_size)}
-    dataloader_retain = dataloader['original'],
-    dataloader_forget = datapipe.get_dataloader(root=data_path, class_id=forget_class, imagenet_json_path=imagenet_json_path, batch_size=batch_size)
-    dataloader['retain'] = dataloader_retain
-    dataloader['forget'] = dataloader_forget
-    
-    optim = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=1e-3)
+    dataloader['retain'] = dataloader['original']
+    dataloader['forget'] = datapipe.get_dataloader(root=data_path, class_id=forget_class, imagenet_json_path=imagenet_json_path, batch_size=batch_size)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optim = torch.optim.Adam(trainable_params, lr=1e-3)
     latent_size = 256 // 8
     z_random = torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
     epoch_length = len(dataloader['original']) if train_mode == 'original' else min(len(dataloader['forget']), len(dataloader['retain']))
@@ -357,7 +352,7 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
                 forget_class=forget_class, img_ext=img_ext)
 
     return model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
-           num_steps,save_steps, collect_interval, log_interval, csv_file, device, grid_size 
+           num_steps,save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params 
 
 
 
@@ -422,7 +417,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     # Setup
     # ---------------------------------------------------
     model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
-           num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size \
+           num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params\
     = init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval,\
            log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 

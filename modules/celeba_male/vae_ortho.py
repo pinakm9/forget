@@ -56,8 +56,8 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
         loss_forget = rec_forget + kl_weight * kl_forget
         loss_retain = rec_retain + kl_weight * kl_retain
 
-        gf = torch.cat([x.view(-1) for x in grad(outputs=loss_forget + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True)])
-        gr = torch.cat([x.view(-1) for x in grad(outputs=loss_retain + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True)])
+        gf = torch.cat([x.view(-1) for x in grad(outputs=loss_forget + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True, create_graph=True)])
+        gr = torch.cat([x.view(-1) for x in grad(outputs=loss_retain + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True, create_graph=True)])
         orth = (gf @ gr)**2 / ((gf @ gf) * (gr @ gr))
 
         loss = forget_weight * loss_forget + loss_retain + orthogonality_weight * orth + uniformity_weight * uniformity
