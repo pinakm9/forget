@@ -9,6 +9,7 @@ import classifier as cl
 import dit
 from torch.cuda.amp import autocast, GradScaler
 
+
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
     cap_major = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0

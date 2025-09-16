@@ -7,6 +7,7 @@ from torchvision.models.feature_extraction import create_feature_extractor
 from scipy.linalg import sqrtm
 import torch, torch.nn.functional as F
 from contextlib import nullcontext
+import gc
 
 def get_classifier(device):
     """
@@ -184,8 +185,16 @@ def identify(identifier, gen_imgs, forget_class, device):
         amp_ctx = nullcontext()   # CPU: no autocast
 
     with torch.no_grad(), amp_ctx:
-        logits = identifier(gen_imgs).logits
+        count = (identifier(gen_imgs).logits.argmax(dim=-1) == forget_class).sum().item() 
+  
     
-
+    # --- free GPU memory ---
+    del logits, outputs, gen_imgs
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        # no explicit empty_cache API, but you can force a GC
+        gc.collect()
     # Do downstream ops in float32 on CPU for numerical safety
-    return (logits.argmax(dim=-1) == forget_class).sum().item() 
+    return count

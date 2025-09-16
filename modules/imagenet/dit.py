@@ -15,7 +15,7 @@ from models import DiT_models
 from diffusion import create_diffusion  # diffusion scheduler/factory
 from download import find_model         # auto-download checkpoints
 from diffusers.models import AutoencoderKL
-
+import gc
 
 
 def load_DiT(folder, device):
@@ -459,6 +459,15 @@ def generate_cfg_steady_fast(
         # scale back and VAE decode
         imgs = vae.decode(latents / LATENT_SCALE).sample[:n_samples]     
     model.train()
+
+    # --- free GPU memory ---
+    del latents, y, y_cond, y_null, z
+
+    if str(device) == "cuda":
+        torch.cuda.empty_cache()
+    elif str(device) == "mps":
+        gc.collect()
+    
     return imgs
  
 
