@@ -7,45 +7,70 @@ import viz
 import torch.utils.checkpoint as _cp
 import classifier as cl
 import dit
+from torch.cuda.amp import autocast, GradScaler
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
-    # amp = (device.type == "cuda")
-    # scaler = torch.cuda.amp.GradScaler(enabled=amp)
-    # @ut.timer
+    cap_major = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0
+    AMP_DTYPE = torch.bfloat16 if cap_major >= 8 else torch.float16   # A100/L4 → bf16, T4/V100 → fp16
+    AMP_ENABLED = torch.cuda.is_available()
+    scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
     def process_batch(img_r, label_r, img_f, label_f):
-        # Forward pass
-        start_time =  time.time()
-        # net.eval()
-        
+        start_time = time.time()
         optim.zero_grad(set_to_none=True)
-        # with torch.cuda.amp.autocast(enabled=amp):
-        loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
-        loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
-        loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
 
-        gf = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_f,
-                                                                   inputs=trainable_params,
-                                                                   retain_graph=True,
-                                                                   create_graph=True)])
-        gr = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_r,
-                                                                   inputs=trainable_params,
-                                                                   retain_graph=True,
-                                                                   create_graph=True)])
-        orth = (gf @ gr)**2 / ((gf @ gf) * (gr @ gr))
+        # ----- forward in mixed precision -----
+        with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
+            loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
+            loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
+            loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
 
+        # ----- higher-order grads (build graph) -----
+        # These grads are w.r.t. trainable_params; keep graph for the final backward.
+        gf = torch.cat([
+            g.reshape(-1) for g in torch.autograd.grad(
+                outputs=loss_f,
+                inputs=trainable_params,
+                retain_graph=True,
+                create_graph=True
+            )
+        ])
+        gr = torch.cat([
+            g.reshape(-1) for g in torch.autograd.grad(
+                outputs=loss_r,
+                inputs=trainable_params,
+                retain_graph=True,
+                create_graph=True
+            )
+        ])
 
-        loss = loss_1 + orthogonality_weight * orth 
+        # Compute orthogonality term in float32 for numerical stability
+        gf32 = gf.float()
+        gr32 = gr.float()
+        denom = (gf32 @ gf32) * (gr32 @ gr32) + 1e-12  # tiny epsilon for safety
+        orth  = ( (gf32 @ gr32) ** 2 ) / denom
 
-        loss.backward()
-        # (optimional) grad clip:
-        # scaler.unscale_(optim); torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-        optim.step()
+        # Combine losses (loss_1 may be fp16/bf16; orth is fp32) → result will be fp32
+        loss = loss_1 + orthogonality_weight * orth
+
+        # ----- backward with GradScaler -----
+        # Scale the final scalar loss (which includes the create_graph path).
+        scaled_loss = scaler.scale(loss) if scaler.is_enabled() else loss
+        scaled_loss.backward()
+
+        # (Optional) grad clipping after unscale
+        if scaler.is_enabled():
+            scaler.unscale_(optim)
+        # torch.nn.utils.clip_grad_norm_(trainable_params, max_norm)  # if you want it
+
+        # Step
+        scaler.step(optim)
+        scaler.update()
+
 
         elapsed_time = time.time() - start_time
-        # print("orth is", gf@gr, orth)
+        return float(loss.detach()), elapsed_time, float(orth.detach())
 
-        return loss.item(),  elapsed_time, orth.item()
     return process_batch
 
 
