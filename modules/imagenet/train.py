@@ -10,6 +10,7 @@ import datapipe
 from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
+import gc
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
                 uniformity_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
@@ -210,8 +211,14 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
         if step % log_interval == 0:
             gen_imgs = dit.generate_cfg_steady_fast(model, vae, diffusion, **gen_kwargs).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
-   
-
+            # --- free GPU memory ---
+            del gen_imgs
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                # no explicit empty_cache API, but you can force a GC
+                gc.collect()
             # Write row to the CSV file
             with open(csv_file, mode='a', newline='') as file:
                 writer = csv.writer(file)

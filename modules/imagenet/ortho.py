@@ -8,6 +8,7 @@ import torch.utils.checkpoint as _cp
 import classifier as cl
 import dit
 from torch.cuda.amp import autocast, GradScaler
+import gc
 
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
@@ -105,8 +106,14 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
         if step % log_interval == 0:
             gen_imgs = dit.generate_cfg_steady_fast(model, vae, diffusion, **gen_kwargs).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
-   
-
+             # --- free GPU memory ---
+            del gen_imgs
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                # no explicit empty_cache API, but you can force a GC
+                gc.collect()
             # Write row to the CSV file
             with open(csv_file, mode='a', newline='') as file:
                 writer = csv.writer(file)

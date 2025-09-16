@@ -186,15 +186,5 @@ def identify(identifier, gen_imgs, forget_class, device):
 
     with torch.no_grad(), amp_ctx:
         count = (identifier(gen_imgs).logits.argmax(dim=-1) == forget_class).sum().item() 
-  
-    
-    # --- free GPU memory ---
-    del logits, outputs, gen_imgs
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    elif device.type == "mps":
-        # no explicit empty_cache API, but you can force a GC
-        gc.collect()
     # Do downstream ops in float32 on CPU for numerical safety
     return count
