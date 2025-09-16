@@ -17,3 +17,23 @@ torch==2.8.0
 torchvision==0.23.0
 tqdm==4.67.1
 transformers==4.56.1
+timm>=1.0.19
+
+# Hugging Face ecosystem
+diffusers>=0.30.0
+transformers>=4.44.0
+accelerate>=1.0.0
+
+# Utilities
+einops>=0.8.0
+
+
+# Optional (comment out if not needed)
+wandb>=0.17.0
+mpi4py>=3.1.6
+
+# JupyterLab + kernel support
+jupyterlab>=4.2.0
+ipykernel>=6.29.0
+ipywidgets
+matplotlib>=3.10.6
