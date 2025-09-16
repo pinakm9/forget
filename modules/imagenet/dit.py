@@ -3,13 +3,14 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import importlib, inspect
+from contextlib import nullcontext
 
 HERE = os.path.dirname(os.path.abspath(__file__))               # .../forget/modules/imagenet
 FAST_DIT = os.path.abspath(os.path.join(HERE, '..', 'fast-DiT'))# .../forget/modules/fast-DiT
 
 if FAST_DIT not in sys.path:
     sys.path.insert(0, FAST_DIT)
-    
+
 from models import DiT_models
 from diffusion import create_diffusion  # diffusion scheduler/factory
 from download import find_model         # auto-download checkpoints
@@ -149,70 +150,71 @@ def load_diffusion(n_steps, downcast=True):
 
 
 
-def generate_cfg(model, vae, diffusion, class_id, n_samples, cfg_scale, device, show=True):
-    """
-    Generates images from a DiT-XL/2 model using the CFG sampling method.
-
-    Parameters
-    ----------
-    model : DiT_models
-        The DiT-XL/2 model.
-    vae : AutoencoderKL
-        The AutoencoderKL model.
-    diffusion : dict
-        The diffusion object.
-    class_id : int
-        The class ID of the images to generate.
-    n_samples : int
-        The number of images to generate.
-    cfg_scale : float
-        The CFG scale.
-    device : torch.device
-        The device on which to generate the images.
-    show : bool, optional
-        If True, displays the generated images. Default is True.
-
-    Returns
-    -------
-    imgs : torch.Tensor
-        The generated images of shape (n_samples, 3, 256, 256).
-    """
-    image_size = 256
+@torch.inference_mode()
+def generate_cfg_fast(
+    model, vae, diffusion, class_id, n_samples, cfg_scale, device, show=True,
+    *,
+    use_amp=True,            # mixed precision for model+VAE
+    channels_last=True,      # better memory access on Ampere+
+    progress=False          # disable progress bar for speed
+):
+    image_size  = 256
     latent_size = image_size // 8
-    # labels: [cond... , null...]
+
+    model.eval();
+    if channels_last:
+        model.to(memory_format=torch.channels_last)
+        try: vae.to(memory_format=torch.channels_last)
+        except: pass
+
+   
     y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
-    y_null = torch.full((n_samples,), 1000,  device=device, dtype=torch.long) # null class
-    y = torch.cat([y_cond, y_null], dim=0)                         # (2n,)
-    
+    y_null = torch.full((n_samples,), NULL_CLASS_ID, device=device, dtype=torch.long)
+    y = torch.cat([y_cond, y_null], dim=0)                      # (2n,)
+
+
+    # initial noise
     z = torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
-    with torch.no_grad():
+
+    # AMP context (bf16 on A100/L4; fp16 otherwise)
+    amp_ctx = nullcontext()
+    if use_amp and torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability()
+        amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+        amp_ctx = torch.cuda.amp.autocast(dtype=amp_dtype)
+
+
+
+    with amp_ctx:
         latents = diffusion.p_sample_loop(
             model.forward_with_cfg, z.shape, z,
-            clip_denoised=False, model_kwargs=dict(y=y, cfg_scale=cfg_scale),
-            progress=True, device=device
+            clip_denoised=False,
+            model_kwargs=dict(y=y, cfg_scale=cfg_scale),
+            progress=progress,
+            device=device,
+            # steps=steps,  # uncomment if your p_sample_loop accepts it
         )
-        sample = latents / 0.18215
-        imgs = vae.decode(sample).sample  # (2n_samples,3,256,256)
-        imgs = imgs[:n_samples]
+        sample = latents / LATENT_SCALE
+        imgs = vae.decode(sample).sample[:n_samples]
+        
 
-    if show:
-        # visualize a grid
-        rows = math.ceil(math.sqrt(n_samples))
-        cols = math.ceil(n_samples / rows)
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
-        axes = np.atleast_1d(axes).ravel()
+    if not show:
+        return imgs
 
-        for i in range(rows * cols):
-            axes[i].axis("off")
-            if i < n_samples:
-                img_vis = imgs[i].detach().float().clamp(-1, 1)
-                img_vis = (img_vis + 1) * 0.5
-                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
-                axes[i].imshow(img_np)
+    # Faster plotting: one CPU hop + simple loop
+    rows = math.ceil(math.sqrt(n_samples))
+    cols = math.ceil(n_samples / rows)
+    imgs_vis = (imgs.detach().float().clamp(-1, 1) + 1) * 0.5
+    imgs_np = imgs_vis.permute(0, 2, 3, 1).cpu().numpy()
 
-        plt.tight_layout()
-        plt.show()
-    
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
+    axes = np.atleast_1d(axes).ravel()
+    for i, ax in enumerate(axes):
+        ax.axis("off")
+        if i < n_samples:
+            ax.imshow(imgs_np[i])
+    plt.tight_layout(); plt.show()
+
     return imgs
 
 
@@ -394,74 +396,72 @@ def encode_to_latents(
 
 
 
-def generate_cfg_steady(model, vae, diffusion, class_id, n_samples, cfg_scale, device, noise, show=True):
-    """
-    Generates images from a DiT-XL/2 model using the CFG sampling method
-    with a fixed noise vector.
 
-    Parameters
-    ----------
-    model : DiT_models
-        The DiT-XL/2 model.
-    vae : AutoencoderKL
-        The AutoencoderKL model.
-    diffusion : dict
-        The diffusion object.
-    class_id : int
-        The class ID of the images to generate.
-    n_samples : int
-        The number of images to generate.
-    cfg_scale : float
-        The CFG scale.
-    device : torch.device
-        The device on which to generate the images.
-    noise : torch.Tensor
-        The fixed noise vector.
-    show : bool, optional
-        If True, displays the generated images. Default is True.
 
-    Returns
-    -------
-    imgs : torch.Tensor
-        The generated images of shape (n_samples, 3, 256, 256).
+LATENT_SCALE = 0.18215
+NULL_CLASS_ID = 1000
+
+@torch.inference_mode()  # slightly faster than no_grad for inference
+def generate_cfg_steady_fast(
+    model, vae, diffusion, class_id, n_samples, cfg_scale, device,
+    noise, show=False,
+    *,
+    use_amp=True,             # fp16/bf16 decode + model forward
+    channels_last=True,       # enable channels_last for conv-heavy models
+):
     """
-    image_size = 256
-    latent_size = image_size // 8
-    # labels: [cond... , null...]
+    Fast preview sampler for training loops.
+    """
+
+    # ---------- caching / setup ----------
+    model.eval()
+    
+    if channels_last:
+        # This helps on Ampere+; harmless if already channels_last
+        model.to(memory_format=torch.channels_last)
+        # VAE path is mostly convs too
+        for m in [vae]:
+            try:
+                m.to(memory_format=torch.channels_last)
+            except Exception:
+                pass
+
+
     y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
-    y_null = torch.full((n_samples,), 1000,  device=device, dtype=torch.long) # null class
-    y = torch.cat([y_cond, y_null], dim=0)                         # (2n,)
-    
-    z = noise #torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
-    with torch.no_grad():
+    y_null = torch.full((n_samples,), NULL_CLASS_ID, device=device, dtype=torch.long)
+    y = torch.cat([y_cond, y_null], dim=0)
+
+    z = noise  # (2*n, 4, H/8, W/8) provided by caller (fixed noise)
+
+    # ---------- AMP context (bf16 on A100/L4; fp16 elsewhere) ----------
+    amp_ctx = nullcontext()
+    if use_amp and torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability()
+        amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+        amp_ctx = torch.cuda.amp.autocast(dtype=amp_dtype)
+
+    # ---------- (optional) fewer sampling steps for previews ----------
+    # If your `diffusion` object exposes something like `set_timesteps`,
+    # use it to downsample the schedule for speed.
+
+
+    # ---------- sampling ----------
+    with amp_ctx:
         latents = diffusion.p_sample_loop(
-            model.forward_with_cfg, z.shape, z,
-            clip_denoised=False, model_kwargs=dict(y=y, cfg_scale=cfg_scale),
-            progress=True, device=device
+            model.forward_with_cfg,
+            z.shape, z,
+            clip_denoised=False,
+            model_kwargs=dict(y=y, cfg_scale=cfg_scale),
+            progress=False,
+            device=device,
+            # steps=fast_steps,  # uncomment if your p_sample_loop supports it
         )
-        sample = latents / 0.18215
-        imgs = vae.decode(sample).sample  # (2n_samples,3,256,256)
-        imgs = imgs[:n_samples]
-
-    if show:
-        # visualize a grid
-        rows = math.ceil(math.sqrt(n_samples))
-        cols = math.ceil(n_samples / rows)
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
-        axes = np.atleast_1d(axes).ravel()
-
-        for i in range(rows * cols):
-            axes[i].axis("off")
-            if i < n_samples:
-                img_vis = imgs[i].detach().float().clamp(-1, 1)
-                img_vis = (img_vis + 1) * 0.5
-                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
-                axes[i].imshow(img_np)
-
-        plt.tight_layout()
-        plt.show()
-    
+        # scale back and VAE decode
+        imgs = vae.decode(latents / LATENT_SCALE).sample[:n_samples]     
+    model.train()
     return imgs
+ 
+
 
 
 

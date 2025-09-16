@@ -208,8 +208,9 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     # @ut.timer
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
-            gen_imgs = dit.generate_cfg_steady(model, vae, diffusion, **gen_kwargs)
-            logits = identifier(gen_imgs).logits
+            gen_imgs = dit.generate_cfg_steady_fast(model, vae, diffusion, **gen_kwargs).clone().detach()
+            with torch.no_grad():
+                logits = identifier(gen_imgs).logits
             class_count = cl.count_from_logits(logits, forget_class) / logits.shape[0]
    
 
