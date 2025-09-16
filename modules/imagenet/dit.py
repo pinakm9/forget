@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import importlib, inspect
+sys.path.append('../fast-DiT')
 from models import DiT_models
 from diffusion import create_diffusion  # diffusion scheduler/factory
 from download import find_model         # auto-download checkpoints
