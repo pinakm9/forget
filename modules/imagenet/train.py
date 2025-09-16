@@ -223,7 +223,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
             with open(csv_file, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow([step] + losses + [elapsed_time] + [1 - class_count, class_count])
-            return gen_imgs
+            # return gen_imgs
     return log_results
 
 
