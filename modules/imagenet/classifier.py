@@ -6,6 +6,7 @@ from torchvision import models
 from torchvision.models.feature_extraction import create_feature_extractor
 from scipy.linalg import sqrtm
 import torch, torch.nn.functional as F
+from contextlib import nullcontext
 
 def get_classifier(device):
     """
@@ -160,3 +161,31 @@ def FID(real_imgs, gen_imgs,
     return float(fid)
 
 
+
+
+
+
+
+
+
+def identify(identifier, gen_imgs, forget_class, device):
+    """
+    FP16 inference on CUDA/MPS, FP32 elsewhere. Safe on Apple M-series (MPS).
+    Returns: class_count in [0,1].
+    """
+
+    # Pick an autocast context per device
+    if device.type == "cuda":
+        amp_ctx = torch.autocast("cuda", dtype=torch.float16)
+    elif device.type == "mps":
+        # MPS autocast supports float16; bf16 is not generally available on MPS
+        amp_ctx = torch.autocast("mps", dtype=torch.float16)
+    else:
+        amp_ctx = nullcontext()   # CPU: no autocast
+
+    with torch.no_grad(), amp_ctx:
+        logits = identifier(gen_imgs).logits
+    
+
+    # Do downstream ops in float32 on CPU for numerical safety
+    return (logits.argmax(dim=-1) == forget_class).sum().item() 
