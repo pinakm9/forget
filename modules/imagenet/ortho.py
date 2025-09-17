@@ -23,7 +23,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
 
         # ----- forward in mixed precision -----
         with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
-            loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
+            # loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
             loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
             loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
 
@@ -53,7 +53,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
         orth  = ( (gf32 @ gr32) ** 2 ) / denom
 
         # Combine losses (loss_1 may be fp16/bf16; orth is fp32) → result will be fp32
-        loss = loss_1 + orthogonality_weight * orth
+        loss = loss_r + orthogonality_weight * orth
 
         # ----- backward with GradScaler -----
         # Scale the final scalar loss (which includes the create_graph path).
