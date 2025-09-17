@@ -59,7 +59,7 @@ def get_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=bool(pin_memory),
-        persistent_workers=num_workers > 0,
+        persistent_workers=num_workers > 0, drop_last=True
     )
 
 
@@ -114,5 +114,5 @@ def get_dataloader_multi(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=bool(pin_memory),
-        persistent_workers=num_workers > 0,
+        persistent_workers=num_workers > 0, drop_last=True
     )
