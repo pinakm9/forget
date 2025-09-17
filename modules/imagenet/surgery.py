@@ -52,7 +52,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
 
 
 
-def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10,\
+def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207,\
           img_ext='jpg', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', 
           n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, **gen_kwargs):
@@ -111,7 +111,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     # ---------------------------------------------------
     model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params \
-    = tt.init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval,\
+    = tt.init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval, learning_rate=learning_rate,\
            log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,

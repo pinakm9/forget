@@ -10,9 +10,10 @@ import datapipe
 from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
+import gc
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
-                uniformity_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
+                uniformity_weight=None, forget_weight=None, learning_rate=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
     sample_dir = f'{folder}/samples'    
     checkpoint_dir = f'{folder}/checkpoints'
     # At the end of the train() function, after training is complete:
@@ -31,7 +32,7 @@ def write_config(model, folder, epochs, epoch_length, batch_size,  collect_inter
                 "description": "Number of samples per training batch."
             },
             "learning_rate": {
-                "value": 0.001,  # This example uses the default for AdamW.
+                "value": learning_rate,  # This example uses the default for AdamW.
                 "description": "Learning rate used by the optimizer."
             },
             "optimizer": {
@@ -208,16 +209,21 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     # @ut.timer
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
-            gen_imgs = dit.generate_cfg_steady(model, vae, diffusion, **gen_kwargs)
-            logits = identifier(gen_imgs).logits
-            class_count = cl.count_from_logits(logits, forget_class) / logits.shape[0]
-   
-
+            gen_imgs = dit.generate_cfg_steady_fast(model, vae, diffusion, **gen_kwargs).clone().detach()
+            class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
+            # --- free GPU memory ---
+            del gen_imgs
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                # no explicit empty_cache API, but you can force a GC
+                gc.collect()
             # Write row to the CSV file
             with open(csv_file, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow([step] + losses + [elapsed_time] + [1 - class_count, class_count])
-            return gen_imgs
+            # return gen_imgs
     return log_results
 
 
@@ -292,7 +298,7 @@ def get_collector(sample_dir, collect_interval, grid_size, identifier, img_ext='
 
 
 
-def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None, collect_interval='epoch', log_interval=10,\
+def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
         uniformity_weight=None, orthogonality_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='jpg',\
         train_mode='original', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_class_index.json',\
         n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False):
@@ -310,7 +316,7 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
     dataloader['retain'] = dataloader['original']
     dataloader['forget'] = datapipe.get_dataloader(root=data_path, class_id=forget_class, imagenet_json_path=imagenet_json_path, batch_size=batch_size)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optim = torch.optim.Adam(trainable_params, lr=1e-3)
+    optim = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.)
     latent_size = 256 // 8
     z_random = torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
     epoch_length = len(dataloader['original']) if train_mode == 'original' else min(len(dataloader['forget']), len(dataloader['retain']))
@@ -350,8 +356,8 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
     # Save config
     write_config(model=model, folder=folder, epochs=epochs, epoch_length=epoch_length, batch_size=batch_size,\
                 collect_interval=collect_interval, log_interval=log_interval, uniformity_weight=uniformity_weight,\
-                orthogonality_weight=orthogonality_weight, forget_weight=forget_weight, exchange_classes=exchange_classes,\
-                forget_class=forget_class, img_ext=img_ext)
+                orthogonality_weight=orthogonality_weight, forget_weight=forget_weight, learning_rate=learning_rate,\
+                exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext)
 
     return model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps,save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params 
@@ -381,7 +387,7 @@ def patch_checkpoint_nonreentrant():
 
 
 
-def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10,\
+def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., exchange_classes=[208], forget_class=207,\
           img_ext='jpg', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', 
           n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, **gen_kwargs):
@@ -439,7 +445,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params\
     = init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval,\
-           log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
+           log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=0., learning_rate=learning_rate,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
            freeze_K=freeze_K, unfreeze_last=unfreeze_last)

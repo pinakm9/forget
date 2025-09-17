@@ -15,7 +15,7 @@ from models import DiT_models
 from diffusion import create_diffusion  # diffusion scheduler/factory
 from download import find_model         # auto-download checkpoints
 from diffusers.models import AutoencoderKL
-
+import gc
 
 
 def load_DiT(folder, device):
@@ -404,22 +404,18 @@ NULL_CLASS_ID = 1000
 @torch.inference_mode()  # slightly faster than no_grad for inference
 def generate_cfg_steady_fast(
     model, vae, diffusion, class_id, n_samples, cfg_scale, device,
-    noise, show=True,
+    noise, show=False,
     *,
-    fast_steps=None,          # e.g. 20–30 for previews (if your diffusion supports it)
     use_amp=True,             # fp16/bf16 decode + model forward
-    use_mode_decode=True,     # deterministic & a little faster than .sample
-    prebuilt_labels=None,     # pass cached labels if you’re calling this in a loop
     channels_last=True,       # enable channels_last for conv-heavy models
-    progress=False            # progress bar costs a bit; disable during training
 ):
     """
     Fast preview sampler for training loops.
     """
 
     # ---------- caching / setup ----------
-    model.eval(); 
-
+    model.eval()
+    
     if channels_last:
         # This helps on Ampere+; harmless if already channels_last
         model.to(memory_format=torch.channels_last)
@@ -430,13 +426,10 @@ def generate_cfg_steady_fast(
             except Exception:
                 pass
 
-    # labels: [cond..., null...]
-    if prebuilt_labels is not None:
-        y = prebuilt_labels.to(device)
-    else:
-        y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
-        y_null = torch.full((n_samples,), NULL_CLASS_ID, device=device, dtype=torch.long)
-        y = torch.cat([y_cond, y_null], dim=0)
+
+    y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
+    y_null = torch.full((n_samples,), NULL_CLASS_ID, device=device, dtype=torch.long)
+    y = torch.cat([y_cond, y_null], dim=0)
 
     z = noise  # (2*n, 4, H/8, W/8) provided by caller (fixed noise)
 
@@ -450,12 +443,7 @@ def generate_cfg_steady_fast(
     # ---------- (optional) fewer sampling steps for previews ----------
     # If your `diffusion` object exposes something like `set_timesteps`,
     # use it to downsample the schedule for speed.
-    if fast_steps is not None:
-        try:
-            diffusion.set_timesteps(fast_steps)  # HuggingFace-style API
-        except Exception:
-            # If not supported, ignore; some implementations accept a steps arg in p_sample_loop
-            pass
+
 
     # ---------- sampling ----------
     with amp_ctx:
@@ -464,21 +452,24 @@ def generate_cfg_steady_fast(
             z.shape, z,
             clip_denoised=False,
             model_kwargs=dict(y=y, cfg_scale=cfg_scale),
-            progress=progress,
+            progress=False,
             device=device,
             # steps=fast_steps,  # uncomment if your p_sample_loop supports it
         )
-
         # scale back and VAE decode
-        sample = latents / LATENT_SCALE
-        decoded = vae.decode(sample)
-        imgs = decoded.mode() if use_mode_decode else decoded.sample
-        imgs = imgs[:n_samples]  # keep only conditioned half
+        imgs = vae.decode(latents / LATENT_SCALE).sample[:n_samples]     
+    model.train()
 
-    if not show:
-        return imgs
+    # --- free GPU memory ---
+    del latents, y, y_cond, y_null, z
 
+    if str(device) == "cuda":
+        torch.cuda.empty_cache()
+    elif str(device) == "mps":
+        gc.collect()
+    
     return imgs
+ 
 
 
 
