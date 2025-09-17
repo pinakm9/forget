@@ -94,7 +94,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             img_forget, label_forget = batch_forget[0].to(device), batch_forget[1].to(device)
             # -- Process a single batch
             if global_step % 2 == 1:
-                loss, elapsed_time = process_batch_odd(img_retain, label_retain, img_forget, label_forget)
+                loss, elapsed_time, _ = process_batch_odd(img_retain, label_retain, img_forget, label_forget)
             else:
                 loss, elapsed_time = process_batch_even(img_retain, label_retain, img_forget, label_forget)
             generated_img = log_results(step=global_step, losses=[loss], elapsed_time=elapsed_time)
