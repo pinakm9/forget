@@ -28,14 +28,13 @@ def loss(
         high=num_steps,
         size=(B,),
         device=device,
-        dtype=torch.long,
     )
 
     # Classifier-free guidance dropout (only if conditional)
-    y_tilde = y.to(device=device, dtype=torch.long)
-    drop = torch.rand(B, device=device) < cfg_drop_prob
-    y_tilde = y_tilde.masked_fill(drop, null_label)  # safe boolean masking
-    model_kwargs = {"y": y_tilde}
+    # y_tilde = y.to(device=device)
+    # drop = torch.rand(B, device=device) < cfg_drop_prob
+    # y_tilde = y_tilde.masked_fill(drop, null_label)  # safe boolean masking
+    model_kwargs = {"y": y}#y_tilde}
 
     losses = DIFFUSION_.training_losses(
         model=model,
