@@ -9,7 +9,7 @@ import classifier as cl
 import dit
 from torch.cuda.amp import autocast, GradScaler
 import gc
-
+import save as sv
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
@@ -223,13 +223,14 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             # -- Process a single batch
             loss, elapsed_time, orth = process_batch(img_retain, label_retain, img_forget, label_forget)
             generated_img = log_results(step=global_step, losses=[loss, orth], elapsed_time=elapsed_time)
-            save(step=global_step)
+            # save(step=global_step)
             collect_samples(generated_img, step=global_step)
             if global_step >= num_steps:
                 done = True
                 break
         if done:
             break
+    sv.save_trainable_checkpoint(model, f"{checkpoint_dir}/DiT_step_{global_step}.pth")
     viz.summarize_training(folder)
 
 
