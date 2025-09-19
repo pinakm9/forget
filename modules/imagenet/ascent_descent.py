@@ -71,9 +71,9 @@ def get_processor_odd(model, vae, diffusion, device, optim):
 
 
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
-          uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207,\
-          img_ext='jpg', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', 
-          n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, **gen_kwargs):
+          uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
+          imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\
+          freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False, **gen_kwargs):
     """
     UNO on a diffusion-based image synthesis model on the ImageNet dataset.
 
@@ -133,7 +133,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
            log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
-           freeze_K=freeze_K, unfreeze_last=unfreeze_last)
+           freeze_K=freeze_K, unfreeze_last=unfreeze_last, unfreeze_x_embedder=unfreeze_x_embedder, keep_all=keep_all)
     process_batch_even = get_processor_even(model, vae, diffusion, device, optim, trainable_params) 
     process_batch_odd = get_processor_odd(model, vae, diffusion, device, optim)
  

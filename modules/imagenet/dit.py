@@ -288,74 +288,133 @@ def generate_uncond(model, vae, diffusion, n_samples, device, show=True):
 
 
 
-def freeze_except_y_and_lastK_adaln(model, K=4, unfreeze_final_layer=False):
+def freeze_except_y_and_lastK_adaln(
+    model,
+    K=4,
+    unfreeze_final_layer=False,
+    unfreeze_x_embedder=False,
+    keep_all=False,
+):
     """
-    Freeze everything except:
-      - y_embedder (always)
-      - adaLN_modulation in the last K transformer blocks
-      - (optional) final_layer if unfreeze_final_layer=True
+    Configure trainable parameters.
+
+    If keep_all=True:
+        - Keep EVERYTHING trainable.
+        - Still compute and print correct stats/breakdown.
+
+    Else (default behavior):
+        - Freeze everything except:
+            * y_embedder (always)
+            * adaLN_modulation in the last K transformer blocks
+            * (optional) x_embedder if unfreeze_x_embedder=True
+            * (optional) final_layer if unfreeze_final_layer=True
 
     Returns:
-      model, stats  (where stats is a dict with param counts)
+        model, stats  (stats is a dict with param counts and breakdown)
     """
-    # 1) Freeze all
-    for p in model.parameters():
-        p.requires_grad = False
-
-    trainable_names = []
-
-    # 2) y_embedder
-    y_params = 0
-    if hasattr(model, "y_embedder"):
-        for n, p in model.y_embedder.named_parameters(prefix="y_embedder"):
-            p.requires_grad = True
-            y_params += p.numel()
-            trainable_names.append(n)
-
-    # 3) last-K adaLN_modulation
-    adaln_params = 0
+    # --- Common meta ---
     num_blocks = len(getattr(model, "blocks", []))
-    K = max(0, min(K, num_blocks))  # clamp
-    if num_blocks and K > 0:
-        for i, blk in enumerate(model.blocks):
-            if i >= num_blocks - K and hasattr(blk, "adaLN_modulation"):
-                for n, p in blk.adaLN_modulation.named_parameters(prefix=f"blocks.{i}.adaLN_modulation"):
-                    p.requires_grad = True
-                    adaln_params += p.numel()
-                    trainable_names.append(n)
+    K = max(0, min(K, num_blocks))  # clamp to available blocks
 
-    # 4) optional final_layer
-    final_params = 0
-    if unfreeze_final_layer and hasattr(model, "final_layer"):
-        for n, p in model.final_layer.named_parameters(prefix="final_layer"):
+    # Helpers
+    def _sum_params(module):
+        return sum(p.numel() for p in module.parameters()) if module is not None else 0
+
+    def _named_params(module, prefix):
+        if module is None:
+            return []
+        return [f"{prefix}.{n}" for n, _ in module.named_parameters()]
+
+    # Initialize counters/containers
+    trainable_names = []
+    x_params = y_params = adaln_params = final_params = 0
+
+    if keep_all:
+        # -------- Keep EVERYTHING trainable, but still compute proper stats --------
+        for p in model.parameters():
             p.requires_grad = True
-            final_params += p.numel()
-            trainable_names.append(n)
 
-    # 5) counts
+        # Breakdown counts (informational only)
+        x_params = _sum_params(getattr(model, "x_embedder", None))
+        y_params = _sum_params(getattr(model, "y_embedder", None))
+        if hasattr(model, "final_layer"):
+            final_params = _sum_params(model.final_layer)
+
+        if num_blocks and K > 0:
+            for i, blk in enumerate(model.blocks):
+                if i >= num_blocks - K and hasattr(blk, "adaLN_modulation"):
+                    adaln_params += _sum_params(blk.adaLN_modulation)
+
+        # Names (for quick inspection). Listing all can be long; keep it consistent:
+        trainable_names = [n for n, _ in model.named_parameters()]
+
+    else:
+        # -------- Original selective unfreeze path --------
+        # 1) Freeze all
+        for p in model.parameters():
+            p.requires_grad = False
+
+        # 2) y_embedder (always)
+        if hasattr(model, "y_embedder"):
+            for n, p in model.y_embedder.named_parameters(prefix="y_embedder"):
+                p.requires_grad = True
+                y_params += p.numel()
+                trainable_names.append(n)
+
+        # 2b) optional x_embedder
+        if unfreeze_x_embedder and hasattr(model, "x_embedder"):
+            for n, p in model.x_embedder.named_parameters(prefix="x_embedder"):
+                p.requires_grad = True
+                x_params += p.numel()
+                trainable_names.append(n)
+
+        # 3) last-K adaLN_modulation
+        if num_blocks and K > 0:
+            for i, blk in enumerate(model.blocks):
+                if i >= num_blocks - K and hasattr(blk, "adaLN_modulation"):
+                    for n, p in blk.adaLN_modulation.named_parameters(prefix=f"blocks.{i}.adaLN_modulation"):
+                        p.requires_grad = True
+                        adaln_params += p.numel()
+                        trainable_names.append(n)
+
+        # 4) optional final_layer
+        if unfreeze_final_layer and hasattr(model, "final_layer"):
+            for n, p in model.final_layer.named_parameters(prefix="final_layer"):
+                p.requires_grad = True
+                final_params += p.numel()
+                trainable_names.append(n)
+
+    # --- Stats / printout (works for both branches) ---
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     stats = {
+        "keep_all": bool(keep_all),
+        "unfreeze_x_embedder": bool(unfreeze_x_embedder),
+        "unfreeze_final_layer": bool(unfreeze_final_layer),
+        "K": K,
+        "num_blocks": num_blocks,
         "total_params": total_params,
         "trainable_params": trainable_params,
         "breakdown": {
+            "x_embedder": x_params,
             "y_embedder": y_params,
             "adaLN_modulation_lastK": adaln_params,
             "final_layer": final_params,
         },
-        "K": K,
-        "num_blocks": num_blocks,
         "trainable_names": trainable_names,  # for quick inspection
     }
 
-    # Nice printout
     def _mk(m): return f"{m/1e6:.2f}M"
     print(f"Total params:     {_mk(total_params)}")
-    print(f"Trainable params: {_mk(trainable_params)}  "
-          f"(y: {_mk(y_params)}, adaLN_last{K}: {_mk(adaln_params)}, final: {_mk(final_params)})")
+    print(
+        f"Trainable params: {_mk(trainable_params)}  "
+        f"(x: {_mk(x_params)}, y: {_mk(y_params)}, "
+        f"adaLN_last{K}: {_mk(adaln_params)}, final: {_mk(final_params)})"
+    )
 
     return model, stats
+
 
 
 

@@ -1,7 +1,7 @@
 {
   "training": {
     "epochs": {
-      "value": 10,
+      "value": 1,
       "description": "The number of epochs to train the model."
     },
     "epoch_length": {

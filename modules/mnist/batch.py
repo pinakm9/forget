@@ -133,6 +133,82 @@ class BatchExperiment:
 
         viz.evolve(self.train_kwargs['folder'])
 
+
+
+    def summarize_wo_fid(self, threhold=2e-2):
+        """
+        Summarize the training curves of all experiments and save the statistics to summary.json and summary_std.json
+
+        Parameters
+        ----------
+        threhold : float, optional
+            The threshold to find the stable stopping point, by default 2e-2
+        Returns
+        -------
+        None
+        """
+        if not os.path.exists(f'{self.train_kwargs["folder"]}/checkpoints'):
+            os.makedirs(f'{self.train_kwargs["folder"]}/checkpoints')
+
+        mean, std, summary, summary_std = {}, {}, {}, {}
+        df0 = pd.read_csv(f'{self.get_folder(0)}/checkpoints/training_log.csv')
+        arr = df0.to_numpy()
+        data = np.zeros((self.n_exprs, arr.shape[0], arr.shape[1]))
+        for i in range(self.n_exprs):
+            folder = self.get_folder(i)
+            data[i] = pd.read_csv(f'{folder}/checkpoints/training_log.csv').to_numpy()
+        data_mean, data_std = np.mean(data, axis=0), np.std(data, axis=0)
+        for i, column in enumerate(df0.columns):
+            mean[column], std[column] = data_mean[:, i], data_std[:, i]
+        pd.DataFrame(mean).to_csv(f'{self.train_kwargs["folder"]}/checkpoints/training_log.csv', index=None)
+        pd.DataFrame(std).to_csv(f'{self.train_kwargs["folder"]}/checkpoints/training_log_std.csv', index=None)
+
+        arr = np.zeros(self.n_exprs)
+        for k, column in enumerate(df0.columns):
+            for i in range(self.n_exprs):
+                j = self.find_stable_stopping_point(data[i][:, int(9 + self.train_kwargs["forget_digit"])], threhold)
+                arr[i] = data[i, j, k]
+            summary[column] = arr.mean() 
+            summary_std[column] = arr.std() 
+
+        # More stable estimate of FID
+        if os.path.exists(self.train_kwargs['folder'] + '/fid.csv'):
+            fid_score = pd.read_csv(self.train_kwargs['folder'] + '/fid.csv')["FID"].to_numpy()
+            summary["FID"] = fid_score.mean()
+            summary_std["FID"] = fid_score.std()
+
+        summary["Time/Step"] = summary["Time"] + 0.
+        summary["Time"] *= summary["Step"]
+
+        summary_std["Time/Step"] = summary_std["Time"] + 0.
+        summary_std["Time"] = np.sqrt(summary["Step"]**2 * summary_std["Time/Step"] **2 +\
+                                      summary["Time/Step"] **2 * summary_std["Step"] **2 +\
+                                      summary_std["Step"] **2 * summary_std["Time/Step"] **2)
+        
+        for filename, payload in (("summary.json", summary), ("summary_std.json", summary_std)):
+            path = f"{self.train_kwargs['folder']}/{filename}"
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r") as f:
+                    prev = json.load(f)
+                if not isinstance(prev, dict):
+                    prev = {}
+            except Exception:
+                prev = {}
+            for k, v in payload.items():
+                if "FID" in k:
+                    continue
+                # ensure JSON-serializable (convert numpy scalars)
+                if isinstance(v, (np.floating, np.integer)):
+                    v = float(v)
+                prev[k] = v
+            with open(path, "w") as f:
+                json.dump(prev, f, indent=2) 
+        return summary, summary_std
+
+
+
     def original_fid(self, n_samples, device):
         """
         Calculate the Fréchet Inception Distance (FID) between real and generated images using the original model.
@@ -175,19 +251,11 @@ class BatchExperiment:
 
     def find_stable_stopping_point(self, signal, threshold):
         """
-        Finds the last index where the signal was above the threshold.
-
-        Args:
-            signal: Array-like time series.
-            threshold: Value above which the signal is considered 'active'.
-
-        Returns:
-            Index of the last value in the signal that is > threshold.
-            Returns -1 if no such point exists.
+        Finds the first index where the signal is below the threshold.
         """
         signal = np.asarray(signal)
-        above_indices = np.where(signal > threshold)[0]
-        return above_indices[-1] if len(above_indices) > 0 else -1
+        below_indices = np.where(signal < threshold)[0]
+        return below_indices[0] if len(below_indices) > 0 else -1
     
 
     @ut.timer

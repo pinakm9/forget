@@ -204,19 +204,26 @@ class BatchExperiment:
                                       summary["Time/Step"] **2 * summary_std["Step"] **2 +\
                                       summary_std["Step"] **2 * summary_std["Time/Step"] **2)
         
-        # summary["Original FID"] = self.original_fid(num_fid_samples, device, batch_size)
-
-
-        # with open(f"{self.train_kwargs['folder']}/summary.json", 'w') as file:
-        #     json.dump(summary, file, indent=2)
-
-        # with open(f"{self.train_kwargs['folder']}/summary_std.json", 'w') as file:
-        #     json.dump(summary_std, file, indent=2)
-
-        # with open(f"{self.train_kwargs['folder']}/config.json", 'w') as file:
-        #     json.dump(ut.get_config(self.get_folder(0)), file, indent=2)
-
-        # viz.evolve(self.train_kwargs['folder']) 
+        for filename, payload in (("summary.json", summary), ("summary_std.json", summary_std)):
+            path = f"{self.train_kwargs['folder']}/{filename}"
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r") as f:
+                    prev = json.load(f)
+                if not isinstance(prev, dict):
+                    prev = {}
+            except Exception:
+                prev = {}
+            for k, v in payload.items():
+                if "FID" in k:
+                    continue
+                # ensure JSON-serializable (convert numpy scalars)
+                if isinstance(v, (np.floating, np.integer)):
+                    v = float(v)
+                prev[k] = v
+            with open(path, "w") as f:
+                json.dump(prev, f, indent=2) 
         return summary, summary_std
 
     
@@ -261,19 +268,11 @@ class BatchExperiment:
     
     def find_stable_stopping_point(self, signal, threshold):
         """
-        Finds the last index where the signal was above the threshold.
-
-        Args:
-            signal: Array-like time series.
-            threshold: Value above which the signal is considered 'active'.
-
-        Returns:
-            Index of the last value in the signal that is > threshold.
-            Returns -1 if no such point exists.
+        Finds the first index where the signal is below the threshold.
         """
         signal = np.asarray(signal)
-        above_indices = np.where(signal > threshold)[0]
-        return above_indices[-1] if len(above_indices) > 0 else -1
+        below_indices = np.where(signal < threshold)[0]
+        return below_indices[0] if len(below_indices) > 0 else -1
         
 
     

@@ -301,11 +301,11 @@ def get_collector(sample_dir, collect_interval, grid_size, identifier, img_ext='
 def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
         uniformity_weight=None, orthogonality_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='jpg',\
         train_mode='original', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_class_index.json',\
-        n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False):
+        n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False):
     
     model, vae = init_model(model_path, device)
     model.train()
-    model, _ = dit.freeze_except_y_and_lastK_adaln(model, freeze_K, unfreeze_last)
+    model, _ = dit.freeze_except_y_and_lastK_adaln(model, freeze_K, unfreeze_last, unfreeze_x_embedder, keep_all)
     diffusion = dit.load_diffusion(diffusion_steps)
     identifier = cl.get_classifier(device)
     sample_dir = f'{folder}/samples'
@@ -388,9 +388,9 @@ def patch_checkpoint_nonreentrant():
 
 
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
-          uniformity_weight=0., exchange_classes=[208], forget_class=207,\
-          img_ext='jpg', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', 
-          n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, **gen_kwargs):
+          uniformity_weight=0., exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
+          imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\
+          freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False, **gen_kwargs):
     """
     Train a diffusion-based image synthesis model on the ImageNet dataset.
 
@@ -448,7 +448,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
            log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=0., learning_rate=learning_rate,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
-           freeze_K=freeze_K, unfreeze_last=unfreeze_last)
+           freeze_K=freeze_K, unfreeze_last=unfreeze_last, unfreeze_x_embedder=unfreeze_x_embedder, keep_all=keep_all)
     process_batch = get_processor(model, vae, diffusion, device, optim)    
     log_results = get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget_class, z_random, **gen_kwargs)
     save = get_saver(model, save_steps, checkpoint_dir, epoch_length)

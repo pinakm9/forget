@@ -2,7 +2,7 @@
 from time import time
 import torch
 import torch.nn as nn
-import glob, os, json
+import glob, os, json, csv
 import numpy as np
 import platform
 import cv2, re
@@ -353,3 +353,68 @@ def get_file_count(folder_path):
         name for name in os.listdir(folder_path)
         if os.path.isfile(os.path.join(folder_path, name))
     ])
+
+
+
+
+
+def summary_csv(summary_paths, summary_std_paths, labels, out_csv_path):
+    """
+    Create a CSV with columns: Label, Step, Time, Time/Step, FID for multiple runs.
+    Each row corresponds to (summary.json, summary_std.json, label) at the same index.
+    Each numeric cell is formatted as 'mean (std)' with 4 significant digits.
+
+    Args:
+        summary_paths (List[str]): Paths to summary.json files.
+        summary_std_paths (List[str]): Paths to summary_std.json files (same length).
+        labels (List[str]): Row labels (same length as the paths).
+        out_csv_path (str): Output CSV path.
+    """
+    if not (len(summary_paths) == len(summary_std_paths) == len(labels)):
+        raise ValueError("summary_paths, summary_std_paths, and labels must have the same length")
+
+    main_cols = ["Step", "Time", "FID", "Time/Step"]
+    fieldnames = ["Label"] + main_cols
+
+    def to_float(x):
+        if isinstance(x, (np.floating, np.integer)):
+            return float(x)
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    def fmt4sig(x):
+        # 4 significant digits (counts both before and after decimal)
+        return f"{x:.4g}"
+
+    rows = []
+    for spath, spath_std, label in zip(summary_paths, summary_std_paths, labels):
+        with open(spath, "r") as f:
+            summary = json.load(f)
+        with open(spath_std, "r") as f:
+            summary_std = json.load(f)
+
+        row = {"Label": str(label)}
+        for col in main_cols:
+            mean = to_float(summary.get(col))
+            std = to_float(summary_std.get(col))
+
+            mean_s = fmt4sig(mean) if mean is not None else ""
+            std_s = fmt4sig(std) if std is not None else ""
+
+            if mean_s and std_s:
+                row[col] = f"{mean_s} ({std_s})"
+            elif mean_s:
+                row[col] = mean_s
+            elif std_s:
+                row[col] = f"({std_s})"
+            else:
+                row[col] = ""
+        rows.append(row)
+
+    with open(out_csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
