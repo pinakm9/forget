@@ -150,7 +150,7 @@ def load_diffusion(n_steps, downcast=True):
 
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def generate_cfg_fast(
     model, vae, diffusion, class_id, n_samples, cfg_scale, device, show=True,
     *,
@@ -429,8 +429,6 @@ def encode_to_latents(
     vae_scaling_factor=0.18215, # scale used by SD AutoencoderKL; adjust if yours differs
     sample_posterior=False,      # True: sample; False: use mean
 ):
-
-
     # Normalize to [-1,1] for most VAEs
     x = x.clamp(-1., 1.)
 
@@ -460,7 +458,7 @@ def encode_to_latents(
 LATENT_SCALE = 0.18215
 NULL_CLASS_ID = 1000
 
-@torch.inference_mode()  # slightly faster than no_grad for inference
+@torch.no_grad()  # slightly faster than no_grad for inference
 def generate_cfg_steady_fast(
     model, vae, diffusion, class_id, n_samples, cfg_scale, device,
     noise, show=False,

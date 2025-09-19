@@ -15,10 +15,9 @@ def loss(
 ):
  
 
-    # Ensure fp32 tensors on the target device
-    # x = x.to(device=device, dtype=torch.float32, non_blocking=True)
-    z = dit.encode_to_latents(vae, x)
-    # noise = noise.to(device=device, dtype=torch.float32, non_blocking=True)
+    with torch.no_grad():
+        # Map input images to latent space + normalize latents:
+        x = vae.encode(x).latent_dist.sample().mul_(0.18215)
 
     B = x.shape[0]
     # Guard against numpy.int64, etc.
@@ -38,7 +37,7 @@ def loss(
 
     losses = DIFFUSION_.training_losses(
         model=model,
-        x_start=z,
+        x_start=x,
         t=t,
         model_kwargs=model_kwargs,
     )
