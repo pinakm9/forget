@@ -41,9 +41,7 @@ def get_dataloader(
     root: str,                  
     class_id: int,                  # e.g., "n02110958"
     imagenet_json_path: str,
-    *,
     batch_size: int = 128,
-    num_workers: int = 4,
     shuffle: bool = True,
 ):
     """
@@ -52,14 +50,11 @@ def get_dataloader(
     """
     dir_with_class = root + f'/{imagenet_maps.i2w(class_id, json_path=imagenet_json_path)}'
     ds = SingleFolderDataset(dir_with_class, class_id)
-    pin_memory = torch.cuda.is_available() or getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
     return DataLoader(
         ds,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=bool(pin_memory),
-        persistent_workers=num_workers > 0, drop_last=True
+        drop_last=True
     )
 
 
@@ -72,9 +67,7 @@ def get_dataloader_multi(
     root: str,
     class_ids: Sequence[int],
     imagenet_json_path: str,
-    *,
     batch_size: int = 128,
-    num_workers: int = 4,
     shuffle: bool = True,
 ):
     """
@@ -83,36 +76,20 @@ def get_dataloader_multi(
     Labels in the loader are the original class_ids you pass in.
     """
     datasets = []
-    missing = []
 
     for cid in class_ids:
         wnid = imagenet_maps.i2w(cid, json_path=imagenet_json_path)
         dir_with_class = os.path.join(root, wnid)
-        if not os.path.isdir(dir_with_class):
-            missing.append((cid, wnid, dir_with_class))
-            continue
         # Your SingleFolderDataset takes (folder, label)
         datasets.append(SingleFolderDataset(dir_with_class, cid))
 
-    if not datasets:
-        raise RuntimeError(
-            "No valid class folders found. Missing entries:\n" +
-            "\n".join(f"  class_id={cid} wnid={wnid} path={path}" for cid, wnid, path in missing)
-        )
-    if missing:
-        print("[get_dataloader_multi] Warning: skipped missing classes:\n" +
-              "\n".join(f"  class_id={cid} wnid={wnid} path={path}" for cid, wnid, path in missing))
 
     ds = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
 
-    pin_memory = torch.cuda.is_available() or (
-        hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    )
+
     return DataLoader(
         ds,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=bool(pin_memory),
-        persistent_workers=num_workers > 0, drop_last=True
+        drop_last=True
     )
