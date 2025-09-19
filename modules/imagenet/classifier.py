@@ -8,6 +8,7 @@ from scipy.linalg import sqrtm
 import torch, torch.nn.functional as F
 from contextlib import nullcontext
 import gc
+import imagenet_maps as imap
 
 def get_classifier(device):
     """
@@ -56,6 +57,15 @@ def count_class(images, device, class_id):
     return count_from_logits(logits, class_id)
 
 
+
+def classify(images, device, json_path=None):  
+    model = get_classifier(device)
+    images = images.to(device)
+    classes = model(images).logits.argmax(dim=-1).tolist()
+    if json_path is not None:
+        classes = [imap.t2i(int(c), json_path) for c in classes]
+    return classes
+  
 
 
 def _best_device():

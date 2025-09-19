@@ -51,7 +51,7 @@ def _load_maps(json_path: Optional[str] = None) -> Dict[str, Dict]:
     )
 
 def wnids_to_class_ids(
-    wnids: Union[WNID, Iterable[WNID]], *, json_path: Optional[str] = None
+    wnids: Union[WNID, Iterable[WNID]],  json_path: Optional[str] = None
 ) -> Union[ClassId, List[ClassId]]:
     m = _load_maps(json_path)
     w2i = m["wnid_to_idx0"]
@@ -60,7 +60,7 @@ def wnids_to_class_ids(
     return [w2i[w] for w in wnids]
 
 def wnids_to_text(
-    wnids: Union[WNID, Iterable[WNID]], *, json_path: Optional[str] = None
+    wnids: Union[WNID, Iterable[WNID]],  json_path: Optional[str] = None
 ) -> Union[str, List[str]]:
     m = _load_maps(json_path)
     w2t = m["wnid_to_text"]
@@ -69,7 +69,7 @@ def wnids_to_text(
     return [w2t[w] for w in wnids]
 
 def class_ids_to_wnids(
-    class_ids: Union[int, Iterable[int]], *, json_path: Optional[str] = None
+    class_ids: Union[int, Iterable[int]],  json_path: Optional[str] = None
 ) -> Union[str, List[str]]:
     m = _load_maps(json_path)
     i2w = m["idx0_to_wnid"]
@@ -99,7 +99,6 @@ def _text_index(json_path: Optional[str] = None):
 
 def text_to_wnid(
     text: str,
-    *,
     json_path: Optional[str] = None,
     strict: bool = True,
     topk: int = 5,
@@ -135,7 +134,6 @@ def text_to_wnid(
 
 def text_to_class_id(
     text: str,
-    *,
     json_path: Optional[str] = None,
     strict: bool = True,
     topk: int = 5,
@@ -152,5 +150,6 @@ def text_to_class_id(
 w2i = wnids_to_class_ids   # wnid(s) -> class id(s)
 w2t = wnids_to_text        # wnid(s) -> text label(s)
 i2w = class_ids_to_wnids   # class id(s) -> wnid(s)
+i2t = lambda *args: w2t(i2w(*args), args[1])
 t2w = text_to_wnid         # text label(s) -> wnid(s)
 t2i = text_to_class_id     # text label(s) -> class id(s)

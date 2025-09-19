@@ -110,7 +110,7 @@ class BatchExperiment:
         for k, column in enumerate(df0.columns):
             for i in range(self.n_exprs):
                 j = self.find_stable_stopping_point(data[i][:, int(9 + self.train_kwargs["forget_class"])], threhold)
-                arr[i] = data[i, j, k]
+                arr[i] = data[i, j, k] if column != "Time" else data[i, :, k].mean()
             summary[column] = arr.mean() 
             summary_std[column] = arr.std() 
 
@@ -174,7 +174,7 @@ class BatchExperiment:
         for k, column in enumerate(df0.columns):
             for i in range(self.n_exprs):
                 j = self.find_stable_stopping_point(data[i][:, int(9 + self.train_kwargs["forget_class"])], threhold)
-                arr[i] = data[i, j, k]
+                arr[i] = data[i, j, k] if column != "Time" else data[i, :, k].mean()
             summary[column] = arr.mean() 
             summary_std[column] = arr.std() 
 

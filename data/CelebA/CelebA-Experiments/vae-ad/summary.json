@@ -5,12 +5,12 @@
   "Uniformity Loss": NaN,
   "Orthogonality Loss": NaN,
   "Total Loss": NaN,
-  "Time": 0.24682676553726104,
+  "Time": 0.24576919219200735,
   "Entropy": NaN,
   "Margin": NaN,
   "0 Fraction": 1.0,
   "1 Fraction": 0.0,
   "FID": NaN,
-  "Time/Step": 0.014434313774108832,
+  "Time/Step": 0.014372467379649551,
   "Original FID": 165.5117645263672
 }
