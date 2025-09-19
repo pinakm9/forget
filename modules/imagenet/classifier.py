@@ -63,7 +63,7 @@ def classify(images, device, json_path=None):
     images = images.to(device)
     classes = model(images).logits.argmax(dim=-1).tolist()
     if json_path is not None:
-        classes = [imap.t2i(int(c), json_path) for c in classes]
+        classes = [imap.i2t(int(c), json_path) for c in classes]
     return classes
   
 
