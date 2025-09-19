@@ -319,7 +319,7 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
     optim = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.)
     latent_size = 256 // 8
     z_random = torch.randn(2*n_samples, 4, latent_size, latent_size, device=device)
-    epoch_length = len(dataloader['original']) if train_mode == 'original' else min(len(dataloader['forget']), len(dataloader['retain']))
+    epoch_length = min(len(dataloader['forget']), len(dataloader['retain'])) #len(dataloader['original']) if train_mode == 'original' else 
     epochs = int(np.ceil(num_steps/epoch_length))
     # num_steps = epochs * epoch_length
     grid_size = 5#int(np.ceil(np.sqrt(batch_size)))
