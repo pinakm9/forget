@@ -36,21 +36,20 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
                 retain_graph=True,
                 create_graph=True
             )
-        ])
+        ]).float()
         gr = torch.cat([
             g.reshape(-1) for g in torch.autograd.grad(
-                outputs=loss_r,
+                outputs=loss_r + loss_1,
                 inputs=trainable_params,
                 retain_graph=True,
                 create_graph=True
             )
-        ])
+        ]).float()
 
         # Compute orthogonality term in float32 for numerical stability
-        gf32 = gf.float()
-        gr32 = gr.float()
-        denom = (gf32 @ gf32) * (gr32 @ gr32) + 1e-12  # tiny epsilon for safety
-        orth  = ( (gf32 @ gr32) ** 2 ) / denom
+        
+        denom = (gf @ gf) * (gr @ gr) + 1e-12  # tiny epsilon for safety
+        orth  = ( (gf @ gr) ** 2 ) / denom
 
         # Combine losses (loss_1 may be fp16/bf16; orth is fp32) → result will be fp32
         loss = loss_r + loss_1 + orthogonality_weight * orth

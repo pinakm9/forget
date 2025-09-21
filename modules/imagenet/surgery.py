@@ -6,34 +6,34 @@ from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
 import save as sv
+from torch.cuda.amp import autocast, GradScaler
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params):
     device = vae.device
-    # amp = (device.type == "cuda")
-    # scaler = torch.cuda.amp.GradScaler(enabled=amp)
-    # @ut.timer
+    cap_major = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0
+    AMP_DTYPE = torch.bfloat16 if cap_major >= 8 else torch.float16   # A100/L4 → bf16, T4/V100 → fp16
+    AMP_ENABLED = torch.cuda.is_available()
+    scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
     def process_batch(img_r, label_r, img_f, label_f):
-        # Forward pass
         start_time =  time.time()
-        # net.eval()
-        
         optim.zero_grad(set_to_none=True)
-        # with torch.cuda.amp.autocast(enabled=amp):
-        loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
-        loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
+        # ----- forward in mixed precision -----
+        with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
+            loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
+            loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
+            loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
 
         gf = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_f,
                                                                    inputs=trainable_params,
-                                                                   retain_graph=True)])
-        gr = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_r,
+                                                                   retain_graph=True)]).float()
+        gr = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_r + loss_1,
                                                                    inputs=trainable_params,
-                                                                   retain_graph=True)])
+                                                                   retain_graph=True)]).float()
     
         # Remove the component of gr that is parallel to gf
-        gfgr = gf @ gr
-        gfgf = gf @ gf
+        # Compute orthogonality term in float32 for numerical stability
 
-        gr -= gf * gfgr / gfgf 
+        gr -= gf * (gf @ gr) / (gf @ gf)
 
         # Reassign gradients to the parameters.
         idx = 0
@@ -42,8 +42,12 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
             p.grad = gr[idx: idx + numel].view(p.shape)
             idx += numel 
 
-        optim.step()
-
+        if scaler.is_enabled():
+        # Unscale in-place so you can clip if needed, then step via scaler
+            scaler.unscale_(optim)
+        # (optional) torch.nn.utils.clip_grad_norm_(trainable_params, max_norm)
+        scaler.step(optim)
+        scaler.update()
         elapsed_time = time.time() - start_time
 
         return loss_r.item(),  elapsed_time
