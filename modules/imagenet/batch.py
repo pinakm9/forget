@@ -13,6 +13,7 @@ from torchvision.utils import save_image
 import train as tt
 import save as sv
 import dit
+import gc
 
 
 
@@ -53,6 +54,8 @@ class BatchExperiment:
             train_kwargs = self.train_kwargs.copy()
             train_kwargs['folder'] = self.get_folder(i)
             self.train_func(**train_kwargs)
+            gc.collect()
+            torch.cuda.empty_cache()
         # self.summarize()
 
     def get_folder(self, index):

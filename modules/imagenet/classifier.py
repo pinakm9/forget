@@ -75,8 +75,17 @@ def _best_device():
         return torch.device("mps")
     return torch.device("cpu")
 
+import torch
+import torch.nn.functional as F
+from torchvision import models
+from torchvision.models.feature_extraction import create_feature_extractor
+
 @torch.no_grad()
-def compute_features(images, batch_size=64, device=None):
+def compute_features(images, batch_size=64, device=None, amp=True):
+    """
+    Computes Inception features with mixed precision (fp16 autocast) on CUDA.
+    Outputs are cast to float32 before returning.
+    """
     device = _best_device() if device is None else torch.device(device)
 
     # lazy-init per device
@@ -84,7 +93,7 @@ def compute_features(images, batch_size=64, device=None):
     ex_dev = getattr(compute_features, "_dev", None)
     if ex is None or ex_dev != str(device):
         w = models.Inception_V3_Weights.IMAGENET1K_V1
-        m = models.inception_v3(weights=w).eval().to(device)  # uses transform_input=True internally
+        m = models.inception_v3(weights=w).eval().to(device)   # transform_input=True internally
         ex = create_feature_extractor(m, return_nodes={"avgpool": "pool"})
         ex.requires_grad_(False)
         compute_features._extractor, compute_features._dev = ex, str(device)
@@ -94,21 +103,28 @@ def compute_features(images, batch_size=64, device=None):
     if x.dim() != 4:
         raise ValueError(f"Expected 4D, got {x.shape}")
     x = x.float()
-    if x.max() > 1.5:                    # [0,255] -> [0,1]
+    if x.max() > 1.5:        # [0,255] -> [0,1]
         x = x / 255.0
-    if x.min() < 0:                      # [-1,1]   -> [0,1]
+    if x.min() < 0:          # [-1,1] -> [0,1]
         x = (x + 1.0) / 2.0
 
-    # resize to 299x299; let the model's internal transform_input handle channel scaling
-    x = F.interpolate(x, size=(299, 299), mode="bilinear", align_corners=False)
-
     feats = []
-    nb = device.type == "cuda"
+    use_cuda = device.type == "cuda"
+    amp_enabled = bool(amp and use_cuda)
+
     for i in range(0, x.size(0), batch_size):
-        xb = x[i:i+batch_size].to(device, non_blocking=nb)
-        out = ex(xb)["pool"].squeeze(-1).squeeze(-1)  # (B, 2048)
-        feats.append(out.cpu())
+        xb = x[i:i+batch_size].to(device, non_blocking=use_cuda)
+
+        # Resize on device so autocast applies to it as well.
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=amp_enabled):
+            xb = F.interpolate(xb, size=(299, 299), mode="bilinear", align_corners=False)
+            out = compute_features._extractor(xb)["pool"].squeeze(-1).squeeze(-1)  # (B, 2048)
+
+        # Return features as float32 on CPU (typical for downstream stats)
+        feats.append(out.float().cpu())
+
     return torch.cat(feats, 0)
+
 
 
 
