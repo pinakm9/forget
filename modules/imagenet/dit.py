@@ -604,6 +604,7 @@ def generate_uncond_steady(model, vae, diffusion, n_samples, device, noise,show=
 
 
 
+@torch.no_grad()
 def generate_cfg_batched(
     model, vae, diffusion,
     class_id: int,
@@ -660,4 +661,72 @@ def generate_cfg_batched(
 
     imgs = torch.cat(out, dim=0)  # (n_samples, 3, 256, 256)
 
+    return imgs.to(torch.float32)
+
+
+
+
+
+
+
+
+@torch.no_grad()
+def generate_uncond_batched(
+    model, vae, diffusion,
+    n_samples: int,
+    device: str,                 # <- string like "cuda:0", "mps", "cpu"
+    batch_size: int = 8,
+    show: bool = False,
+    null_class: int = 1000,
+):
+    """
+    Batched unconditional sampling for DiT-XL/2 (+ AutoencoderKL) at 256x256.
+    Returns imgs in [-1, 1], shape (n_samples, 3, 256, 256).
+    """
+    image_size = 256
+    latent_size = image_size // 8  # 32 for 256x256
+    out = []
+
+    dev_str = str(device)  # ensure string
+    if dev_str.startswith("cuda"):
+        device_type = "cuda"
+        use_amp = True
+        ac_dtype = torch.float16
+    elif dev_str.startswith("mps"):
+        device_type = "mps"
+        use_amp = True
+        ac_dtype = torch.float16
+    else:
+        device_type = "cpu"
+        use_amp = False       # disable autocast on CPU by default for stability
+        ac_dtype = torch.bfloat16
+
+    with torch.amp.autocast(device_type=device_type, dtype=ac_dtype, enabled=use_amp):
+        remaining = n_samples
+        while remaining > 0:
+            b = min(batch_size, remaining)
+
+            # noise (b, 4, 32, 32)
+            z = torch.randn(b, 4, latent_size, latent_size, device=dev_str)
+
+            # Unconditional: pass null labels (or set y=None if your model treats None as uncond)
+            y = torch.full((b,), null_class, device=dev_str, dtype=torch.long)
+
+            # Reverse diffusion
+            latents = diffusion.p_sample_loop(
+                model.forward, z.shape, z,
+                clip_denoised=False,
+                model_kwargs=dict(y=y),
+                progress=False,
+                device=dev_str
+            )
+
+            # Decode VAE latents to images in [-1, 1]
+            sample = latents / 0.18215
+            imgs_b = vae.decode(sample).sample  # (b, 3, 256, 256)
+            out.append(imgs_b)
+
+            remaining -= b
+
+    imgs = torch.cat(out, dim=0)
     return imgs.to(torch.float32)

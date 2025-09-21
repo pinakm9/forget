@@ -386,6 +386,12 @@ def patch_checkpoint_nonreentrant():
 
 
 
+def free_gpu_memory(device):
+    gc.collect()
+    if str(device) == "cuda":
+        torch.cuda.empty_cache()
+        
+
 
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
@@ -464,9 +470,10 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             real_img = real_img.to(device)
             # -- Process a single batch
             loss, elapsed_time = process_batch(real_img, label)
-            generated_img = log_results(step=global_step, losses=[loss], elapsed_time=elapsed_time)
+            log_results(step=global_step, losses=[loss], elapsed_time=elapsed_time)
             # save(step=global_step)
-            collect_samples(generated_img, step=global_step)
+            # collect_samples(generated_img, step=global_step)
+            free_gpu_memory(device)
             if global_step >= num_steps:
                 done = True
                 break

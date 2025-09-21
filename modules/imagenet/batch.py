@@ -271,11 +271,11 @@ class BatchExperiment:
     
     def find_stable_stopping_point(self, signal, threshold):
         """
-        Finds the first index where the signal is below the threshold.
+        Finds the last index where the signal is above the threshold + 1.
         """
         signal = np.asarray(signal)
-        below_indices = np.where(signal < threshold)[0]
-        return below_indices[0] if len(below_indices) > 0 else -1
+        above_indices = np.where(signal > threshold)[0]
+        return above_indices[-1] + 1 if len(above_indices) > 0 and above_indices[-1] + 1 < len(signal) else -1
         
 
     
