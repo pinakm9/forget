@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import importlib, inspect
 from contextlib import nullcontext
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 
 HERE = os.path.dirname(os.path.abspath(__file__))               # .../forget/modules/imagenet
 FAST_DIT = os.path.abspath(os.path.join(HERE, '..', 'fast-DiT'))# .../forget/modules/fast-DiT
@@ -220,72 +221,210 @@ def generate_cfg_fast(
 
 
 
-def generate_uncond(model, vae, diffusion, n_samples, device, show=True):
+
+
+
+def make_generator(device: str, seed: int) -> torch.Generator:
+    dev_type = "cuda" if device.startswith("cuda") else ("mps" if device.startswith("mps") else "cpu")
+    return torch.Generator(device=dev_type).manual_seed(int(seed))
+
+# ---------- schedules ----------
+def _to_tensor(x, device, dtype):
+    return x.to(device=device, dtype=dtype) if isinstance(x, torch.Tensor) \
+           else torch.tensor(x, device=device, dtype=dtype)
+
+def _prepare_schedules(diffusion, device, dtype=torch.float32):
+    # Prefer provided alphas_cumprod; else compute from betas.
+    if hasattr(diffusion, "alphas_cumprod") and diffusion.alphas_cumprod is not None:
+        a_bar = _to_tensor(diffusion.alphas_cumprod, device, torch.float32)
+        betas = None
+    else:
+        betas = _to_tensor(getattr(diffusion, "betas"), device, torch.float32)
+        alphas = 1.0 - betas
+        a_bar = torch.cumprod(alphas, dim=0)
+
+    T = a_bar.numel()
+    a_bar_prev = torch.ones_like(a_bar); a_bar_prev[1:] = a_bar[:-1]
+    if betas is None:
+        alphas_t = a_bar / a_bar_prev
+        betas = 1.0 - alphas_t
+    else:
+        alphas_t = 1.0 - betas
+
+    sqrt_a_bar = torch.sqrt(a_bar)
+    sqrt_one_minus_a_bar = torch.sqrt(1.0 - a_bar)
+    posterior_var = betas * (1.0 - a_bar_prev) / (1.0 - a_bar)
+    posterior_log_var_clipped = torch.log(torch.clamp(posterior_var, min=1e-20))
+    posterior_mean_coef1 = betas * torch.sqrt(a_bar_prev) / (1.0 - a_bar)
+    posterior_mean_coef2 = (1.0 - a_bar_prev) * torch.sqrt(alphas_t) / (1.0 - a_bar)
+
+    # keep schedules in float32 for numerical stability
+    return dict(
+        T=T,
+        sqrt_a_bar=sqrt_a_bar,
+        sqrt_one_minus_a_bar=sqrt_one_minus_a_bar,
+        posterior_log_var_clipped=posterior_log_var_clipped,
+        posterior_mean_coef1=posterior_mean_coef1,
+        posterior_mean_coef2=posterior_mean_coef2,
+    )
+
+# ---------- one step (supports ε and v prediction; uses generator) ----------
+def p_sample_with_gen(diffusion, model_fn, x, t_idx,
+                      model_kwargs=None, clip_denoised=False,
+                      generator=None, prediction_type="epsilon"):
     """
-    Unconditional generation with a class-conditioned DiT by feeding only the null label.
-
-    Parameters
-    ----------
-    model : DiT_models
-        The DiT model (e.g., DiT-XL/2) with num_classes=1000.
-    vae : AutoencoderKL
-        Decoder used to map latents -> images.
-    diffusion : object
-        Diffusion sampler with p_sample_loop(...).
-    n_samples : int
-        Number of images to generate.
-    device : torch.device
-        CUDA or CPU device.
-    show : bool, optional
-        If True, shows a grid of generated images.
-
-
-    Returns
-    -------
-    imgs : torch.Tensor
-        Generated images, shape (n_samples, 3, image_size, image_size), range ~[-1, 1].
+    t_idx: integer index into schedules (0..T-1)
+    prediction_type: "epsilon" or "v"
     """
-    image_size=256
-    latent_size = image_size // 8
+    S = diffusion._schedules
+    B, C, H, W = x.shape
+    device = x.device
+    x_dtype = x.dtype
 
-    # Use only null labels for unconditional sampling
-    y = torch.full((n_samples,), 1000, device=device, dtype=torch.long) # null_id = 1000
+    # DiT expects (B,) int64 timesteps on the same device
+    t_tensor = torch.full((B,), int(t_idx), device=device, dtype=torch.long)
 
-    # Initial noise in latent space
-    z = torch.randn(n_samples, 4, latent_size, latent_size, device=device)
+    # forward pass
+    out = model_fn(x, t_tensor, **(model_kwargs or {}))  # (B,C,H,W) or (B,2C,H,W) or tuple
+    out = out[0] if isinstance(out, (tuple, list)) else out
+    if out.shape[1] != C:
+        if out.shape[1] == 2 * C:  # learned variance: take first half as ε/v
+            out, _ = torch.split(out, C, dim=1)
+        else:
+            raise RuntimeError(f"Model returned {out.shape[1]} channels for C={C}.")
 
-    with torch.no_grad():
-        latents = diffusion.p_sample_loop(
-            model.forward,                               # no CFG path; plain forward
-            (n_samples, 4, latent_size, latent_size),    # explicit shape
-            z,
-            clip_denoised=False,
-            model_kwargs=dict(y=y),                      # supply null labels
-            progress=True,
-            device=device
-        )
-        samples = latents / 0.18215
-        imgs = vae.decode(samples).sample  # (n_samples, 3, H, W), ~[-1, 1]
+    # schedules (float32) as scalars broadcast to (1,1,1,1)
+    sa = S["sqrt_a_bar"][t_idx].view(1,1,1,1)
+    so = S["sqrt_one_minus_a_bar"][t_idx].view(1,1,1,1)
+
+    # reconstruct x0 depending on prediction type
+    if prediction_type == "epsilon":
+        # x0 = (x - sqrt(1 - a_bar)*eps) / sqrt(a_bar)
+        x0 = (x - so.to(x_dtype) * out) / sa.to(x_dtype)
+    elif prediction_type == "v":
+        # x0 = sqrt(a_bar)*x - sqrt(1 - a_bar)*v   (diffusers convention)
+        x0 = sa.to(x_dtype) * x - so.to(x_dtype) * out
+    else:
+        raise ValueError("prediction_type must be 'epsilon' or 'v'")
+
+    if clip_denoised:
+        x0 = x0.clamp(-1, 1)
+
+    # posterior mean
+    c1 = S["posterior_mean_coef1"][t_idx].view(1,1,1,1).to(x_dtype)
+    c2 = S["posterior_mean_coef2"][t_idx].view(1,1,1,1).to(x_dtype)
+    mean = c1 * x0 + c2 * x
+
+    if t_idx > 0:
+        logvar = S["posterior_log_var_clipped"][t_idx].view(1,1,1,1)  # float32
+        # randn_like(..., generator=...) may not exist in your build → use explicit shape:
+        if generator is not None:
+            noise = torch.randn((B, C, H, W), device=device, dtype=x_dtype, generator=generator)
+        else:
+            noise = torch.randn_like(x)
+        x_prev = mean + torch.exp(0.5 * logvar).to(x_dtype) * noise
+    else:
+        x_prev = mean
+
+    return x_prev
+
+# ---------- loop (uses timesteps AS GIVEN; generator for determinism) ----------
+def p_sample_loop_with_gen(diffusion, model_fn, shape, x0,
+                           model_kwargs=None, clip_denoised=False,
+                           progress=False, device="cpu", generator=None,
+                           timesteps=None, prediction_type="epsilon"):
+    # prepare schedules once (keep in float32; your model can run fp16)
+    diffusion._schedules = _prepare_schedules(diffusion, device, dtype=torch.float32)
+    T = diffusion._schedules["T"]
+
+    # choose timesteps: if provided, use AS IS; else go T-1..0
+    if timesteps is not None:
+        ts = list(timesteps)  # assume the caller/scheduler gives the correct order (usually descending)
+    else:
+        ts = list(range(T-1, -1, -1))
+
+    # init state
+    dtype = x0.dtype if x0 is not None else torch.float32
+    x = x0 if x0 is not None else torch.randn(shape, device=device, dtype=dtype, generator=generator)
+
+    iterator = ts
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            iterator = tqdm(ts, total=len(ts))
+        except Exception:
+            pass
+
+    for t in iterator:
+        t_idx = int(t)
+        x = p_sample_with_gen(diffusion, model_fn, x, t_idx,
+                              model_kwargs=model_kwargs, clip_denoised=clip_denoised,
+                              generator=generator, prediction_type=prediction_type)
+    return x
+
+# ---------- full generate (deterministic with seed) ----------
+@torch.inference_mode()
+def generate_uncond_steady(model, vae, diffusion,
+                           n_samples: int,
+                           device: str,
+                           noise=None,
+                           show: bool=False,
+                           seed=None,
+                           null_class: int=1000,
+                           prediction_type: str="epsilon"):  # "epsilon" or "v"
+    image_size, latent_size = 256, 32
+    dev_str = str(device)
+    vae_dtype = next(vae.parameters()).dtype
+    model.eval(); vae.eval()
+
+    # per-run generator (optional)
+    gen = None
+    if seed is not None:
+        dev_type = "cuda" if dev_str.startswith("cuda") else ("mps" if dev_str.startswith("mps") else "cpu")
+        gen = torch.Generator(device=dev_type).manual_seed(int(seed))
+
+    # initial noise in the same dtype as the VAE expects
+    if noise is None:
+        z0 = torch.randn(n_samples, 4, latent_size, latent_size,
+                         device=dev_str, dtype=vae_dtype, generator=gen)
+    else:
+        z0 = noise.to(device=dev_str, dtype=vae_dtype)
+
+    # unconditional labels (or set y=None if your model supports that)
+    y = torch.full((n_samples,), null_class, device=dev_str, dtype=torch.long)
+
+    # reverse process (respect scheduler order; deterministic via `gen`)
+    latents = p_sample_loop_with_gen(
+        diffusion=diffusion,
+        model_fn=lambda x, t, **kw: model.forward(x, t, **kw),
+        shape=(n_samples, 4, latent_size, latent_size),
+        x0=z0,
+        model_kwargs=dict(y=y),
+        clip_denoised=False,
+        progress=False,
+        device=dev_str,
+        generator=gen,
+        timesteps=getattr(diffusion, "timesteps", None),
+        prediction_type=prediction_type,
+    )
+
+    # decode
+    scale = latents.new_tensor(0.18215, dtype=vae_dtype)
+    imgs = vae.decode(latents.to(dtype=vae_dtype) / scale).sample  # (N,3,256,256), ~[-1,1]
 
     if show:
-        rows = math.ceil(math.sqrt(n_samples))
-        cols = math.ceil(n_samples / rows)
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
-        axes = np.atleast_1d(axes).ravel()
-
-        for i in range(rows * cols):
+        r = int(math.ceil(math.sqrt(n_samples)))
+        fig, axes = plt.subplots(r, r, figsize=(2.4*r, 2.4*r))
+        axes = axes.flatten() if hasattr(axes, "flatten") else [axes]
+        disp = imgs.detach().clamp(-1, 1)
+        for i in range(r*r):
             axes[i].axis("off")
             if i < n_samples:
-                img_vis = imgs[i].detach().float().clamp(-1, 1)
-                img_vis = (img_vis + 1) * 0.5
-                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
-                axes[i].imshow(img_np)
-
-        plt.tight_layout()
-        plt.show()
+                img = (disp[i]*0.5 + 0.5).permute(1,2,0).to("cpu").numpy()
+                axes[i].imshow(img)
+        plt.tight_layout(); plt.show()
 
     return imgs
-
 
 
 def freeze_except_y_and_lastK_adaln(
@@ -458,146 +597,108 @@ def encode_to_latents(
 LATENT_SCALE = 0.18215
 NULL_CLASS_ID = 1000
 
-@torch.no_grad()  # slightly faster than no_grad for inference
-def generate_cfg_steady_fast(
-    model, vae, diffusion, class_id, n_samples, cfg_scale, device,
-    noise, show=False,
-    *,
-    use_amp=True,             # fp16/bf16 decode + model forward
-    channels_last=True,       # enable channels_last for conv-heavy models
+@torch.no_grad()
+def generate(
+    model,
+    vae,
+    class_labels,                  # LongTensor [B]
+    num_steps: int = 50,
+    guidance_scale: float = 8.0,
+    seed: int = 42,
+    device: str = "cuda",
+    prediction_type: str = "epsilon",
+    vae_scaling: float = 0.18215,  # SD-style scaling for 256x256 (4x32x32 latents)
+    microbatch_size: int = 64,     # A100 can usually take 16–64 at 256^2; tune per VRAM
+    amp_dtype: torch.dtype | None = None,
+    **kwargs  # None => pick bfloat16 if supported else float16
 ):
     """
-    Fast preview sampler for training loops.
+    Optimized sampler for A100:
+      - autocast (bf16 on A100 by default)
+      - TF32 matmul enabled
+      - Flash/SDP attention (PyTorch 2.x)
+      - channels_last
+      - classifier-free guidance via single forward per step (concat trick)
+      - VAE decode under autocast on GPU
+    Returns: float32 images in [0,1], shape [B,3,H,W].
     """
 
-    # ---------- caching / setup ----------
-    model.eval()
-    
-    if channels_last:
-        # This helps on Ampere+; harmless if already channels_last
-        model.to(memory_format=torch.channels_last)
-        # VAE path is mostly convs too
-        for m in [vae]:
-            try:
-                m.to(memory_format=torch.channels_last)
-            except Exception:
-                pass
+    B_total = class_labels.shape[0]
+    device = torch.device(device)
+    # Choose AMP dtype: A100 supports bf16 well; fall back to fp16
+    if amp_dtype is None:
+        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
+    # ---- Scheduler ----
+    scheduler = DDIMScheduler(
+        num_train_timesteps=1000,
+        beta_start=1e-4,
+        beta_end=2e-2,
+        beta_schedule="linear",
+        clip_sample=False,
+    )
+    scheduler.config.prediction_type = prediction_type
+    scheduler.set_timesteps(num_steps, device=device)
+    timesteps = scheduler.timesteps
 
-    y_cond = torch.full((n_samples,), class_id, device=device, dtype=torch.long)
-    y_null = torch.full((n_samples,), NULL_CLASS_ID, device=device, dtype=torch.long)
-    y = torch.cat([y_cond, y_null], dim=0)
+    # Deterministic seeds per-sample so results are independent of microbatching
+    base_gen = torch.Generator(device=device).manual_seed(seed)
+    outs = []
+    model.eval(); 
 
-    z = noise  # (2*n, 4, H/8, W/8) provided by caller (fixed noise)
+    # Process in micro-batches
+    for start in range(0, B_total, microbatch_size):
+        end = min(start + microbatch_size, B_total)
+        bs  = end - start
+        labels_mb = class_labels[start:end].to(device, non_blocking=True)
+        null_labels = torch.full_like(labels_mb, fill_value=1000)
 
-    # ---------- AMP context (bf16 on A100/L4; fp16 elsewhere) ----------
-    amp_ctx = nullcontext()
-    if use_amp and torch.cuda.is_available():
-        major, _ = torch.cuda.get_device_capability()
-        amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
-        amp_ctx = torch.cuda.amp.autocast(dtype=amp_dtype)
+        # fixed per-sample seeds
+        gen = torch.Generator(device=device).manual_seed(seed + start)
 
-    # ---------- (optional) fewer sampling steps for previews ----------
-    # If your `diffusion` object exposes something like `set_timesteps`,
-    # use it to downsample the schedule for speed.
+        # Init latent noise (4x32x32 for 256x256 with SD-style VAE)
+        x = torch.randn(bs, 4, 32, 32, generator=gen, device=device, dtype=amp_dtype)
 
+        # Pre-allocate timestep tensor (+ doubled for CFG concat)
+        t_batch = torch.empty(bs, dtype=torch.long, device=device)
+        t_batch2 = torch.empty(bs * 2, dtype=torch.long, device=device)
 
-    # ---------- sampling ----------
-    with amp_ctx:
-        latents = diffusion.p_sample_loop(
-            model.forward_with_cfg,
-            z.shape, z,
-            clip_denoised=False,
-            model_kwargs=dict(y=y, cfg_scale=cfg_scale),
-            progress=False,
-            device=device,
-            # steps=fast_steps,  # uncomment if your p_sample_loop supports it
-        )
-        # scale back and VAE decode
-        imgs = vae.decode(latents / LATENT_SCALE).sample[:n_samples]     
-    model.train()
+        # Diffusion loop with CFG "concat trick": one forward per step
+        with torch.autocast(device_type="cuda", dtype=amp_dtype):
+            for t in timesteps:
+                t_batch.fill_(t)
+                # concat [uncond, cond]
+                x_in = torch.cat([x, x], dim=0)
+                labels_cat = torch.cat([null_labels, labels_mb], dim=0)
+                t_batch2[:bs] = t_batch; t_batch2[bs:] = t_batch
 
-    # --- free GPU memory ---
-    del latents, y, y_cond, y_null, z
+                # Model forward once
+                eps = model(x_in, t_batch2, labels_cat)
+                # if isinstance(eps, (tuple, list)):
+                # eps = eps[0]
+                # if eps.shape[1] > 4:
+                eps = eps[:, :4]  # drop variance channels if present
 
-    if str(device) == "cuda":
-        torch.cuda.empty_cache()
-    elif str(device) == "mps":
-        gc.collect()
-    
-    return imgs
- 
+                # Split and combine
+                eps_u, eps_c = eps[:bs], eps[bs:]
+                eps_guided = eps_u + guidance_scale * (eps_c - eps_u)
 
+                # DDIM update (eta=0 deterministic)
+                x = scheduler.step(eps_guided, t, x, eta=0.0).prev_sample
 
+            # Decode latents -> [0,1]
+            z = x / vae_scaling
+            imgs = vae.decode(z).sample[:B_total] 
+            imgs = (imgs.clamp(-1, 1) + 1) / 2
 
+        # Cast to float32 for downstream code
+        outs.append(imgs.to(dtype=torch.float32))
 
+        # housekeeping
+        del x, z, imgs
 
-def generate_uncond_steady(model, vae, diffusion, n_samples, device, noise,show=True):
-    """
-    Unconditional generation with a class-conditioned DiT by feeding only the null label.
+    return torch.cat(outs, dim=0)
 
-    Parameters
-    ----------
-    model : DiT_models
-        The DiT model (e.g., DiT-XL/2) with num_classes=1000.
-    vae : AutoencoderKL
-        Decoder used to map latents -> images.
-    diffusion : object
-        Diffusion sampler with p_sample_loop(...).
-    n_samples : int
-        Number of images to generate.
-    device : torch.device
-        CUDA or CPU device.
-    noise : torch.Tensor
-        Initial noise in latent space of shape (n_samples, 4, latent_size, latent_size).
-    show : bool, optional
-        If True, shows a grid of generated images.
-
-    Returns
-    -------
-    imgs : torch.Tensor
-        Generated images, shape (n_samples, 3, image_size, image_size), range ~[-1, 1].
-    """
-    image_size=256
-    latent_size = image_size // 8
-
-    # Use only null labels for unconditional sampling
-    y = torch.full((n_samples,), 1000, device=device, dtype=torch.long) # null_id = 1000
-
-    # Initial noise in latent space
-    z = noise # torch.randn(n_samples, 4, latent_size, latent_size, device=device)
-
-    with torch.no_grad():
-        latents = diffusion.p_sample_loop(
-            model.forward,                               # no CFG path; plain forward
-            (n_samples, 4, latent_size, latent_size),    # explicit shape
-            z,
-            clip_denoised=False,
-            model_kwargs=dict(y=y),                      # supply null labels
-            progress=True,
-            device=device
-        )
-        samples = latents / 0.18215
-        imgs = vae.decode(samples).sample  # (n_samples, 3, H, W), ~[-1, 1]
-
-    if show:
-        rows = math.ceil(math.sqrt(n_samples))
-        cols = math.ceil(n_samples / rows)
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
-        axes = np.atleast_1d(axes).ravel()
-
-        for i in range(rows * cols):
-            axes[i].axis("off")
-            if i < n_samples:
-                img_vis = imgs[i].detach().float().clamp(-1, 1)
-                img_vis = (img_vis + 1) * 0.5
-                img_np = img_vis.permute(1, 2, 0).cpu().numpy()
-                axes[i].imshow(img_np)
-
-        plt.tight_layout()
-        plt.show()
-
-    return imgs
 
 
 

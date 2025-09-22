@@ -199,26 +199,22 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     Returns:
     A function that takes in step, losses, elapsed_time, and logs them to the CSV file.
     """
+
     device = vae.device
-    gen_kwargs['class_id'] = forget_class
     gen_kwargs['device'] = device
-    gen_kwargs['show'] = False
-    gen_kwargs['noise'] = z_random
-    gen_kwargs['n_samples'] = z_random.shape[0] // 2
+    labels = torch.full((gen_kwargs['n_samples'],), forget_class, device=device)
   
     # @ut.timer
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
-            gen_imgs = dit.generate_cfg_steady_fast(model, vae, diffusion, **gen_kwargs).clone().detach()
+            gen_imgs = dit.generate(model, vae, labels, **gen_kwargs).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
             # --- free GPU memory ---
             del gen_imgs
-            if device.type == "cuda":
+            if str(device) == "cuda":
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-            elif device.type == "mps":
-                # no explicit empty_cache API, but you can force a GC
-                gc.collect()
+            gc.collect()
             # Write row to the CSV file
             with open(csv_file, mode='a', newline='') as file:
                 writer = csv.writer(file)

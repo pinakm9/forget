@@ -201,14 +201,15 @@ def identify(identifier, gen_imgs, forget_class, device):
     Returns: class_count in [0,1].
     """
 
-    # Pick an autocast context per device
-    if device.type == "cuda":
-        amp_ctx = torch.autocast("cuda", dtype=torch.float16)
-    elif device.type == "mps":
-        # MPS autocast supports float16; bf16 is not generally available on MPS
+    if str(device) == "cuda":
+        use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        amp_ctx = torch.autocast("cuda", dtype=amp_dtype)
+    elif str(device) == "mps":
+        # BF16 on MPS is still spotty; FP16 is the safe bet.
         amp_ctx = torch.autocast("mps", dtype=torch.float16)
     else:
-        amp_ctx = nullcontext()   # CPU: no autocast
+        amp_ctx = nullcontext()
 
     with torch.no_grad(), amp_ctx:
         count = (identifier(gen_imgs).logits.argmax(dim=-1) == forget_class).sum().item() 
