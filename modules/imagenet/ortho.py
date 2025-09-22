@@ -95,7 +95,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     """
     device = vae.device
     gen_kwargs['device'] = device
-    labels = torch.full((gen_kwargs['n_samples'],), forget_class, device=device)
+    labels = torch.full((len(z_random) // 2,), forget_class, device=device)
   
     # @ut.timer
     def log_results(step, losses, elapsed_time):
