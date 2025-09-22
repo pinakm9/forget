@@ -49,6 +49,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
         scaler.step(optim)
         scaler.update()
         elapsed_time = time.time() - start_time
+        del gf, gr
 
         return loss_r.item(),  elapsed_time
     return process_batch

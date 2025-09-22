@@ -67,7 +67,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
         # Step
         scaler.step(optim)
         scaler.update()
-
+        del gr, gf
 
         elapsed_time = time.time() - start_time
         return float(loss.detach()), elapsed_time, float(orth.detach())
