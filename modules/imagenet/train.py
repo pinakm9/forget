@@ -201,14 +201,16 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     """
 
     device = vae.device
-    gen_kwargs['device'] = device
     labels = torch.full((len(z_random) // 2,), forget_class, device=device)
   
     # @ut.timer
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
-            gen_imgs = dit.generate(model, vae, labels, **gen_kwargs).clone().detach()
+            model.eval()
+            gen_imgs = dit.generate(model, vae, labels, n_steps=gen_kwargs['n_steps'], device=device,\
+                                     guidance_scale=gen_kwargs['guidance_scale']).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
+            model.train()
             # --- free GPU memory ---
             del gen_imgs
             if str(device) == "cuda":

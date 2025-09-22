@@ -15,7 +15,17 @@ import save as sv
 import dit
 import gc
 from cleanfid import fid
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Optional
+from cleanfid import fid
+from cleanfid.features import build_feature_extractor
+import imagenet_maps as imap
+import random
+from pathlib import Path
+from typing import List, Tuple
+import torchvision.io as io
+import torchvision.transforms.functional as TF
+from torchvision.io import ImageReadMode
+from tqdm import tqdm
 
 
 class BatchExperiment:
@@ -281,7 +291,7 @@ class BatchExperiment:
 
     
     @ut.timer
-    def fid(self, n_samples, device, batch_size=256):
+    def fid(self, real_img_folder, n_samples, json_path, batch_size, **gen_kwargs):
         """
         Calculate the Fréchet Inception Distance (FID) for all experiments in the folder.
 
@@ -306,12 +316,15 @@ class BatchExperiment:
         time taken for execution.
         """
         self.set_models()
+        device = self.vae.device
         if isinstance(device, str):
             device = torch.device(device)
-        dataloader = datapipe.get_dataloader_multi(self.train_kwargs['data_path'], self.train_kwargs['exchange_classes'],\
-                                             self.train_kwargs['imagenet_json_path'], batch_size=n_samples)
-        real_images, _ = next(iter(dataloader))
-        real_images = real_images.to(device)
+
+        real_imgs, names = load_random_images_torch(real_img_folder, n_samples)
+        real_imgs = real_imgs.to(device)
+        labels = [imap.w2i(w.split('/')[-1].split('_')[0], json_path) for w in names]
+        labels = torch.tensor(labels, device=device)
+       
         self.gen_kwargs["n_samples"] = n_samples
         self.gen_kwargs["batch_size"] = batch_size
         
@@ -320,7 +333,7 @@ class BatchExperiment:
         for i in range(self.n_exprs):
             folder = self.get_folder(i)
             try:
-                fid_score = self.compute_fid_from_folder(real_images, folder, batch_size)
+                fid_score = self.compute_fid_from_folder(real_imgs, labels, folder, batch_size, **gen_kwargs)
             except:
                 fid_score = np.nan
             results.append((i, fid_score))  # collect result
@@ -394,7 +407,7 @@ class BatchExperiment:
 
 
     @ut.timer
-    def compute_fid_from_folder(self, real_images, folder, batch_size=256):
+    def compute_fid_from_folder(self, real_images, labels, folder, batch_size, **gen_kwargs):
         """
         Computes the Fréchet Inception Distance (FID) for the latest checkpoint in a given folder.
 
@@ -442,11 +455,13 @@ class BatchExperiment:
         sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
         
         # Generate images
-        gen_images = dit.generate(self.model, self.vae, **self.gen_kwargs)
+        gen_images = dit.generate(self.model, self.vae, labels, n_steps=gen_kwargs['n_steps'],\
+                                  device=str(device), guidance_scale=gen_kwargs['guidance_scale'])
 
         # Compute FID from tensors
-        fid_score = self.compute_fid(real_images, gen_images, batch_size)
-
+        fid_score = fid_tt(real_images, gen_images, batch_size=batch_size, device=str(device))
+        del gen_images
+        gc.collect()
         # print(f"[{identifier}] FID: {fid_score:.2f}")
         return fid_score
 
@@ -756,53 +771,108 @@ class BatchCompare:
 
 
 
-def make_cleanfid_gen_from_tensor(
+def make_cleanfid_model_gen_from_tensor(
     imgs: torch.Tensor,
-    *,
-    value_range: Tuple[float, float] = (0.0, 1.0),  # or (-1, 1)
-) -> Tuple[Callable, int]:
-    """
-    Wrap a tensor of images (N, C, H, W) into a Clean-FID generator.
-    Returns: (gen_fn, num_images)
-      - gen_fn(z_batch) -> np.uint8 array of shape (B, H, W, C) in [0,255]
-      - num_images: total N (handy for num_gen)
-    """
-    assert imgs.ndim == 4 and imgs.shape[1] in (1, 3), "Expect (N,C,H,W) with C=1 or 3"
-
-    x = imgs.detach().cpu()  # no autograd, on CPU
-    # normalize to [0,1]
-    if value_range == (-1.0, 1.0):
-        x = (x * 0.5 + 0.5).clamp(0, 1)
-    else:
-        x = x.clamp(0, 1)
-
-    # NCHW -> NHWC and uint8 [0,255]
-    x = (x.permute(0, 2, 3, 1) * 255.0).round().to(torch.uint8).numpy()
-    N = x.shape[0]
-    state = {"i": 0}  # cursor
+    value_range: Tuple[float, float] = (0.0, 1.0),
+):
+    assert imgs.ndim == 4 and imgs.shape[1] in (1, 3), "imgs must be (N,C,H,W)"
+    x = imgs.detach().cpu()
+    x = (x * 0.5 + 0.5).clamp(0, 1) if value_range == (-1, 1) else x.clamp(0, 1)
+    x = (x * 255.0).round().to(torch.uint8)  # (N,C,H,W)
+    N = x.shape[0]; state = {"i": 0}
 
     def gen(z_batch):
-        # Clean-FID calls gen with a noise batch; we just match its size.
         B = z_batch.shape[0] if torch.is_tensor(z_batch) else int(z_batch)
-        i = state["i"]; j = min(i + B, N)
-        batch = x[i:j]
-        state["i"] = j
-        # If Clean-FID asks for more than N, loop (safe) or raise—choose your flavor:
+        i, j = state["i"], min(state["i"] + B, N)
+        batch = x[i:j]; state["i"] = j
         if batch.shape[0] < B:
             k = B - batch.shape[0]
-            batch = (batch.tolist() + x[:k].tolist())  # simple wraparound
+            batch = torch.cat([batch, x[:k]], dim=0)
             state["i"] = k
-            batch = np.asarray(batch, dtype=x.dtype)
-        return batch  # (B, H, W, C) uint8 in [0,255]
+        return batch  # torch.uint8, NCHW
 
     return gen, N
 
+def fid_tt(
+    real: torch.Tensor,
+    imgs: torch.Tensor,
+    batch_size: int = 256,
+    device: str = "cuda",
+    value_range: Tuple[float, float] = (0, 1),
+    folder_transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,  # HWC uint8 -> HWC uint8
+    gen_transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,     # HWC uint8 -> HWC uint8
+    mode: str = "clean",
+):
+    device_str = str(device)
+    feat = build_feature_extractor(mode=mode, device=device_str)
 
-
-
-def fid_fg(folder, gen_images, batch_size=256):
-    device = gen_images.device
-    gen = make_cleanfid_gen_from_tensor(gen_images)
-    return fid.compute_fid(folder, gen, mode="clean", device=device, batch_size=batch_size, num_workers=0)    
-
+    # Folder features (folder-only transform)
+    gen_r, N_r = make_cleanfid_model_gen_from_tensor(real, value_range=value_range)
+    gen, N = make_cleanfid_model_gen_from_tensor(imgs, value_range=value_range)
     
+    f1 = fid.get_model_features(
+        gen_r,
+        model=feat,
+        mode=mode,
+        num_gen=N,
+        batch_size=batch_size,
+        device=device_str,
+        custom_image_tranform=gen_transform,   # optional, numpy HWC -> numpy HWC
+        desc="Real images  : ",                     # <-- use `desc` here
+    )
+
+    # Generator features
+    f2 = fid.get_model_features(
+        gen,
+        model=feat,
+        mode=mode,
+        num_gen=N,
+        batch_size=batch_size,
+        device=device_str,
+        custom_image_tranform=gen_transform,   # optional, numpy HWC -> numpy HWC
+        desc="Generated images : ",                     # <-- use `desc` here
+    )
+
+    return fid.fid_from_feats(f1, f2)
+
+
+
+
+
+def load_random_images_torch(folder: str, n: int, size: int = 256, progress: bool = True
+                            ) -> Tuple[torch.Tensor, List[str]]:
+    """
+    Load exactly n random RGB images into a tensor (n, 3, size, size) using torchvision.
+    Ignores images that don't have 3 channels.
+    """
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    files = [p for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in exts]
+    if not files:
+        raise ValueError(f"No images found in {folder}")
+
+    random.shuffle(files)
+
+    imgs: List[torch.Tensor] = []
+    kept_paths: List[str] = []
+
+    pbar = tqdm(total=n, desc="Loading images", disable=not progress)
+    for fp in files:
+        if len(imgs) == n:  #  stop as soon as we hit n
+            break
+        try:
+            img = io.read_image(str(fp), mode=ImageReadMode.UNCHANGED)  # (C,H,W)
+            if img.shape[0] != 3:  # skip grayscale or RGBA
+                continue
+            img = TF.resize(img, [size, size], interpolation=TF.InterpolationMode.BICUBIC)
+            imgs.append(img)
+            kept_paths.append(str(fp))
+            pbar.update(1)
+        except Exception:
+            continue
+    pbar.close()
+
+    if len(imgs) < n:
+        raise ValueError(f"Could only load {len(imgs)} valid RGB images out of {n} requested.")
+
+    batch = torch.stack(imgs).float().div_(255.0)  # (n,3,H,W), range [0,1]
+    return batch, kept_paths
