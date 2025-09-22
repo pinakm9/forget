@@ -602,7 +602,7 @@ def generate(
     model,
     vae,
     class_labels,                  # LongTensor [B]
-    num_steps: int = 50,
+    n_steps: int = 50,
     guidance_scale: float = 8.0,
     seed: int = 42,
     device: str = "cuda",
@@ -638,7 +638,7 @@ def generate(
         clip_sample=False,
     )
     scheduler.config.prediction_type = prediction_type
-    scheduler.set_timesteps(num_steps, device=device)
+    scheduler.set_timesteps(n_steps, device=device)
     timesteps = scheduler.timesteps
 
     # Deterministic seeds per-sample so results are independent of microbatching
