@@ -18,6 +18,7 @@ torchvision==0.23.0
 tqdm==4.67.1
 transformers==4.56.1
 timm>=1.0.19
+clean-fid
 
 # Hugging Face ecosystem
 diffusers>=0.30.0
