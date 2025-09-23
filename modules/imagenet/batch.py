@@ -153,7 +153,7 @@ class BatchExperiment:
                                       summary["Time/Step"] **2 * summary_std["Step"] **2 +\
                                       summary_std["Step"] **2 * summary_std["Time/Step"] **2)
         
-        summary["Original FID"] = self.original_fid(num_fid_samples, self.train_kwargs["device"], batch_size)
+        # summary["Original FID"] = self.original_fid(num_fid_samples, self.train_kwargs["device"], batch_size)
 
 
         with open(f"{self.train_kwargs['folder']}/summary.json", 'w') as file:
@@ -283,11 +283,11 @@ class BatchExperiment:
     
     def find_stable_stopping_point(self, signal, threshold):
         """
-        Finds the last index where the signal is above the threshold + 1.
+        Finds the first index where the signal is below the threshold.
         """
         signal = np.asarray(signal)
-        above_indices = np.where(signal > threshold)[0]
-        return above_indices[-1] + 1 if len(above_indices) > 0 and above_indices[-1] + 1 < len(signal) else -1
+        below_indices = np.where(signal < threshold)[0]
+        return below_indices[0] if len(below_indices) > 0 else -1
         
 
     
@@ -463,6 +463,7 @@ class BatchExperiment:
         fid_score = fid_tt(real_images, gen_images, batch_size=batch_size, device=str(device))
         del gen_images
         gc.collect()
+        torch.cuda.empty_cache()
         # print(f"[{identifier}] FID: {fid_score:.2f}")
         return fid_score
 
