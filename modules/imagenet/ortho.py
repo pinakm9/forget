@@ -10,6 +10,7 @@ import dit
 from torch.cuda.amp import autocast, GradScaler
 import gc
 import save as sv
+import generate as gn
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
@@ -100,7 +101,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
             model.eval()
-            gen_imgs = dit.generate(model, vae, labels, n_steps=gen_kwargs['n_steps'], device=device,\
+            gen_imgs = gn.generate(model, vae, labels, n_steps=gen_kwargs['n_steps'], device=device,\
                                      guidance_scale=gen_kwargs['guidance_scale']).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
             model.train()

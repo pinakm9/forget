@@ -11,6 +11,7 @@ from tqdm import tqdm
 import viz
 import torch.utils.checkpoint as _cp
 import gc
+import generate as gn
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
                 uniformity_weight=None, forget_weight=None, learning_rate=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
@@ -207,7 +208,7 @@ def get_logger(model, vae, diffusion, identifier, csv_file, log_interval, forget
     def log_results(step, losses, elapsed_time):
         if step % log_interval == 0:
             model.eval()
-            gen_imgs = dit.generate(model, vae, labels, n_steps=gen_kwargs['n_steps'], device=device,\
+            gen_imgs = gn.generate(model, vae, labels, n_steps=gen_kwargs['n_steps'], device=device,\
                                      guidance_scale=gen_kwargs['guidance_scale']).clone().detach()
             class_count = cl.identify(identifier, gen_imgs, forget_class, device) / gen_imgs.shape[0]
             model.train()

@@ -26,6 +26,7 @@ import torchvision.io as io
 import torchvision.transforms.functional as TF
 from torchvision.io import ImageReadMode
 from tqdm import tqdm
+import generate as gn
 
 
 class BatchExperiment:
@@ -274,7 +275,7 @@ class BatchExperiment:
         self.gen_kwargs["n_samples"] = n_samples
         self.gen_kwargs["batch_size"] = batch_size
         
-        gen_images = dit.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
+        gen_images = gn.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
         
         return self.compute_fid(real_images, gen_images, batch_size)
 
@@ -397,7 +398,7 @@ class BatchExperiment:
     #     sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
         
     #     # Generate images
-    #     gen_images = dit.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
+    #     gen_images = gn.generate_cfg_batched(self.model, self.vae, self.diffusion, **self.gen_kwargs)
 
     #     # Compute FID from tensors
     #     fid_score = self.compute_fid(real_images, gen_images, batch_size)
@@ -455,7 +456,7 @@ class BatchExperiment:
         sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
         
         # Generate images
-        gen_images = dit.generate(self.model, self.vae, labels, n_steps=gen_kwargs['n_steps'],\
+        gen_images = gn.generate(self.model, self.vae, labels, n_steps=gen_kwargs['n_steps'],\
                                   device=str(device), guidance_scale=gen_kwargs['guidance_scale'])
 
         # Compute FID from tensors
