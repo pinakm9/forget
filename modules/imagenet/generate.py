@@ -1,6 +1,7 @@
 
-import torch
-from diffusers.schedulers.scheduling_ddim import DDIMScheduler  # or your scheduler
+import os, torch
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler 
+import utility as ut 
 
 @torch.no_grad()
 def generate(
@@ -98,5 +99,132 @@ def generate(
 
         # housekeeping
         del x, z, imgs
+
+    return torch.cat(outs, dim=0)
+
+
+
+
+
+
+
+
+@ut.timer
+@torch.no_grad()
+def gen_x(
+    model,
+    vae,
+    x,                              # [B,4,32,32] latents already provided
+    class_label,               # single int; labels built inside
+    n_steps: int = 10,
+    guidance_scale: float = 2.0,
+    device: str = "mps",            # <- default to mps for Macs
+    prediction_type: str = "epsilon",
+    vae_scaling: float = 0.18215,
+    microbatch_size: int = 16,      # <- smaller default for MPS VRAM
+    amp_dtype: torch.dtype | None = None,
+    cfg_concat: bool = False,       # <- False on MPS to reduce peak memory
+    vae_decode_chunk: int = 8,      # <- decode in chunks on MPS
+):
+    """
+    MPS-focused changes:
+      - autocast(device_type='mps', dtype=torch.float16)
+      - optional non-concat CFG to cut memory
+      - chunked VAE decode to avoid OOM
+      - avoid CUDA-only optimizations (TF32, channels_last, flash attn)
+      - allow CPU fallback for unsupported ops
+    """
+    # 1) Enable CPU fallback for odd ops (harmless on CUDA/CPU too)
+    # os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    
+
+    dev = torch.device(device)
+    x = x.to(dev, non_blocking=False)  # non_blocking is CUDA-only; no-op on MPS
+
+    if amp_dtype is None:
+        # MPS: prefer float16 (bf16 is inconsistent on Metal as of today)
+        amp_dtype = torch.float16 if dev.type == "mps" else (
+            torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
+        )
+
+    # 2) Scheduler setup
+    scheduler = DDIMScheduler(
+        num_train_timesteps=1000,
+        beta_start=1e-4,
+        beta_end=2e-2,
+        beta_schedule="linear",
+        clip_sample=False,
+    )
+    scheduler.config.prediction_type = prediction_type
+    scheduler.set_timesteps(n_steps, device=dev)
+    timesteps = scheduler.timesteps
+
+    B_total = x.shape[0]
+    if isinstance(class_label, int):
+        class_labels = torch.full((B_total,), class_label, dtype=torch.long, device=device)
+    elif isinstance(class_label, list):
+        class_labels = torch.tensor(class_label, dtype=torch.long, device=device)
+    else:
+        class_labels = class_label.to(device=device, dtype=torch.long)
+
+    outs = []
+
+    # 3) Microbatch loop (smaller for MPS)
+    for start in range(0, B_total, microbatch_size):
+        end = min(start + microbatch_size, B_total)
+        bs = end - start
+
+        labels_mb = class_labels[start:end]
+        null_labels = torch.full_like(labels_mb, fill_value=1000)
+
+        x_mb = x[start:end].to(dev, dtype=amp_dtype)
+
+        # Pre-alloc timesteps
+        t_batch = torch.empty(bs, dtype=torch.long, device=dev)
+        if cfg_concat:
+            t_batch2 = torch.empty(bs * 2, dtype=torch.long, device=dev)
+
+        # 4) Diffusion loop
+        #    Use autocast on MPS with fp16
+        with torch.autocast(device_type=dev.type, dtype=amp_dtype):
+            for t in timesteps:
+                t_batch.fill_(t)
+
+                if cfg_concat:
+                    # (A) concat trick = 1 forward/step, higher memory
+                    x_in = torch.cat([x_mb, x_mb], dim=0)
+                    labels_cat = torch.cat([null_labels, labels_mb], dim=0)
+                    t_batch2[:bs] = t_batch
+                    t_batch2[bs:] = t_batch
+
+                    eps = model(x_in, t_batch2, labels_cat)[:, :4]
+                    eps_u, eps_c = eps[:bs], eps[bs:]
+                else:
+                    # (B) two passes = lower peak memory, good for MPS
+                    eps_u = model(x_mb, t_batch, null_labels)[:, :4]
+                    eps_c = model(x_mb, t_batch, labels_mb)[:, :4]
+
+                eps_guided = eps_u + guidance_scale * (eps_c - eps_u)
+                x_mb = scheduler.step(eps_guided, t, x_mb, eta=0.0).prev_sample
+
+            # 5) Chunked VAE decode (helps avoid MPS OOM)
+            z = x_mb / vae_scaling
+            imgs_mb = []
+            for i in range(0, bs, vae_decode_chunk):
+                j = min(i + vae_decode_chunk, bs)
+                # keep decode on MPS to stay on-GPU; if you see OOMs, do `.to("cpu")` before decode
+                decoded = vae.decode(z[i:j]).sample
+                decoded = (decoded.clamp(-1, 1) + 1) / 2
+                imgs_mb.append(decoded)
+
+            imgs_mb = torch.cat(imgs_mb, dim=0)
+
+        outs.append(imgs_mb.to(dtype=torch.float32))
+
+        # MPS tip: occasional sync helps benchmark accuracy (optional)
+        if dev.type == "mps":
+            torch.mps.synchronize()
+
+        del x_mb, z, imgs_mb
 
     return torch.cat(outs, dim=0)

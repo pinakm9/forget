@@ -53,6 +53,35 @@ def load_DiT(folder, device):
     return model, vae
 
 
+def load_dit(path, device):
+    """
+    Loads a DiT-XL/2 model from a checkpoint file.
+
+    Parameters
+    ----------
+    path : str
+        The path to the checkpoint file.
+    device : torch.device
+        The device on which to load the model.
+
+    Returns
+    -------
+    model : DiT_models
+        The loaded DiT-XL/2 model.
+    """
+    image_size = 256
+    latent = image_size // 8
+
+    model = DiT_models["DiT-XL/2"](input_size=latent, num_classes=1000).to(device)
+    state_dict = find_model(path)
+    model.load_state_dict(state_dict); model.eval()
+
+    # vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse").to(device)
+    model.eval()
+    return model
+
+
+
 # --- 1) Fix the diffusion object itself (preferred) ---
 def fix_diffusion_fp32(diffusion):
     """
