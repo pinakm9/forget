@@ -1,0 +1,16 @@
+{
+  "Step": 515.0,
+  "Reconstruction Loss": 30616.724609375,
+  "KL Loss": 16394.84541015625,
+  "Uniformity Loss": 0.6819375693798065,
+  "Orthogonality Loss": 0.5880747184157371,
+  "Total Loss": 47693.50758891106,
+  "Time": 8.921476602554296,
+  "Entropy": 0.06650710068643087,
+  "Margin": 0.043703456595539994,
+  "0 Fraction": 0.9609375,
+  "1 Fraction": 0.0390625,
+  "FID": NaN,
+  "Time/Step": 0.01732325553894038,
+  "Original FID": 165.21368408203125
+}

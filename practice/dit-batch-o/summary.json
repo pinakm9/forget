@@ -1,0 +1,11 @@
+{
+  "Step": 2.0,
+  "Total Loss": 0.01970071650976022,
+  "Time": 7.772300958633423,
+  "0 Fraction": 0.0,
+  "1 Fraction": 1.0,
+  "Orthogonality Loss": 0.0,
+  "FID": NaN,
+  "Time/Step": 3.8861504793167114,
+  "Original FID": 303.64422212875706
+}
