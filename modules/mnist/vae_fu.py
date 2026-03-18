@@ -310,9 +310,12 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
 
     Parameters:
     net (nn.Module): The VAE model.
-    trainable_params (list): List of parameters to optimize.
+    net0 (nn.Module): The frozen reference VAE model.
     identifier (nn.Module): The model used for logits computation.
     z_random (torch.tensor): Random latent codes for the decoder.
+    z_e (torch.tensor): Feature direction.
+    v_unit (torch.tensor): Unit vector along the feature direction.
+    delta (float): Threshold.
     weights (tuple): Contains weights for KL divergence and uniformity loss.
     optim (torch.optim.Optimizer): Optimizer for the VAE.
     all_digits (list): List of all class labels.
