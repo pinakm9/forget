@@ -302,7 +302,7 @@ def L_full(g, f, z, z_e, v_unit, delta, alpha=3.):
 
 
 
-def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_classes, forget_class):
+def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_classes, forget_class, latent_dim, device):
     """
     Returns a function that processes a batch of images through a VAE network and computes the necessary gradients.
 
@@ -332,7 +332,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     def process_batch(real_img_retain, real_img_forget):
         kl_weight, uniformity_weight = weights
         
-        z = torch.randn(2*real_img_retain.shape[0], z_random.shape[1]).to(z_random.device)
+        z = torch.randn(2*real_img_retain.shape[0], latent_dim).to(device)
         time_0 = time.time()
         optim.zero_grad()
 
@@ -422,7 +422,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     v_unit = res['feature_direction_unit'].to(device)
     delta = res['delta']
 
-    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_classes, forget_class)    
+    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_classes, forget_class, latent_dim, device)    
     # ---------------------------------------------------  
     # ---------------------------------------------------
     # Main training loop
@@ -442,4 +442,4 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
             save(step=global_step)
             collect_samples(generated_img, step=global_step)
     viz_kwargs.update({"folder": folder})
-    viz.summarize_training(**viz_kwargs) 
+    viz.summarize_training(**viz_kwargs)
