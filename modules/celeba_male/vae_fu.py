@@ -51,7 +51,7 @@ def collect_latents(net, dataloader, device=None, use_mu=True, max_batches=None)
 
         # support (img, label) or other variants
         imgs = batch[0] if isinstance(batch, (tuple, list)) else batch
-        imgs = imgs.view(imgs.shape[0], -1).to(device)
+        imgs = imgs.to(device)
 
         _, mu, logvar = net(imgs)
 
