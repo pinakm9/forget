@@ -302,7 +302,7 @@ def L_full(g, f, z, z_e, v_unit, delta, alpha=3.):
 
 
 
-def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_digits, forget_digit):
+def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_classes, forget_class):
     """
     Returns a function that processes a batch of images through a VAE network and computes the necessary gradients.
 
@@ -347,7 +347,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
         with torch.no_grad():
             generated_img = net.decode(z_random)
             logits = identifier(generated_img)
-            uniformity = vl.uniformity_loss_surgery(logits, all_digits=all_digits, forget_digit=forget_digit)
+            uniformity = vl.uniformity_loss_surgery(logits, all_classes=all_classes, forget_class=forget_class)
 
         return None, None, uniformity.item(), None, generated_img, logits, elapsed_time
     return process_batch
@@ -422,7 +422,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     v_unit = res['feature_direction_unit'].to(device)
     delta = res['delta']
 
-    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_digits, forget_digit)    
+    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_classes, forget_class)    
     # ---------------------------------------------------  
     # ---------------------------------------------------
     # Main training loop
