@@ -332,7 +332,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     def process_batch(real_img_retain, real_img_forget):
         kl_weight, uniformity_weight = weights
         
-        z = torch.randn(2*real_img_retain.shape[0], net.latent_dim).to(net.device)
+        z = torch.randn(2*real_img_retain.shape[0], z_random.shape[1]).to(net.device)
         time_0 = time.time()
         optim.zero_grad()
 
