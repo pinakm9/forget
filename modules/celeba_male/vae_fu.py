@@ -4,7 +4,7 @@ import numpy as np
 import os, sys, copy
 import time
 from torch.autograd import grad
-from pytorch_msssim import ms_ssim
+from pytorch_msssim import ssim
 
 sys.path.append(os.path.abspath('../modules'))
 import utility as ut
@@ -257,44 +257,39 @@ def compute_z_hat(z, z_e, v_unit, delta):
     z_hat = z - excess.unsqueeze(1) * z_e.unsqueeze(0)
     return z_hat
 
-def L_recon(g, f, z, v_unit, delta):
-    """
-    Paper-style L_recon for a VAE.
-
-    This function applies the piecewise rule batchwise.
-
-    Parameters
-    ----------
-    g : nn.Module
-        Trainable VAE. Assumed to return reconstructed, mu, logvar on net(x).
-    f : nn.Module
-        Frozen reference VAE with decoder used as D0.
-    v_unit : torch.Tensor
-        Feature direction normalized, shape [latent_dim].
-    delta : float or scalar tensor
-        Threshold.
 
 
-    Returns
-    -------
-    loss : torch.Tensor
-
-    """
-    gz = g.decode(z)
-    fz = f.decode(z)
-    s = sim(z, v_unit, delta)
-    return ((1 - s) * torch.abs(gz - fz).sum(dim=1)).mean()
 
 
-def L_full(g, f, z, z_e, v_unit, delta, alpha=3.):
+def L_full(g, f, z, z_e, v_unit, delta, alpha):
     z_hat = compute_z_hat(z, z_e, v_unit, delta)
+
     gz = g.decode(z)
     fz = f.decode(z)
     fzhat = f.decode(z_hat)
-    s = sim(z, v_unit, delta)
-    l_recon = ((1 - s) * torch.abs(gz - fz).sum(dim=1)).mean()
-    l_unlearn = (s * torch.abs(gz - fzhat).sum(dim=1)).mean()
-    l_percep = (s * (1. - ms_ssim(gz.view(-1, 1, 28, 28), fzhat.view(-1, 1, 28, 28), data_range=1.0))).mean()
+
+    s = sim(z, v_unit, delta)   # [B]
+
+    # If decoder returns flat vectors, reshape to images first
+    # gz = gz.view(-1, 3, 64, 64)
+    # fz = fz.view(-1, 3, 64, 64)
+    # fzhat = fzhat.view(-1, 3, 64, 64)
+
+    recon_per_sample = torch.abs(gz - fz).flatten(1).sum(dim=1)
+    unlearn_per_sample = torch.abs(gz - fzhat).flatten(1).sum(dim=1)
+
+    l_recon = ((1.0 - s) * recon_per_sample).mean()
+    l_unlearn = (s * unlearn_per_sample).mean()
+
+
+    per_sample_ms_ssim = ssim(
+        gz,
+        fzhat,
+        data_range=1.0,
+        size_average=False
+    )
+
+    l_percep =  (s * (1.0 - per_sample_ms_ssim)).mean()
 
     return l_recon + alpha * (l_unlearn + l_percep)
 
