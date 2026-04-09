@@ -21,7 +21,7 @@ def get_processor(model, vae, teacher, device, optim):
     scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
     sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device=device, dtype=torch.float32)
     sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device=device, dtype=torch.float32)
-    eta = 3.0
+    eta = 1.0
     
     def process_batch(img_f, label_f):
         start_time =  time.time()
