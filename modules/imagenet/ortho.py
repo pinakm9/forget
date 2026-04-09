@@ -24,9 +24,9 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
 
         # ----- forward in mixed precision -----
         with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
-            loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
-            loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
-            loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
+            loss_1 = ls.loss_pure(model, vae, diffusion, device, img_r, label_f)
+            loss_r = ls.loss_pure(model, vae, diffusion, device, img_r, label_r)
+            loss_f = ls.loss_pure(model, vae, diffusion, device, img_f, label_f)
 
         # ----- higher-order grads (build graph) -----
         # These grads are w.r.t. trainable_params; keep graph for the final backward.
@@ -68,9 +68,9 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params, orthog
         # Step
         scaler.step(optim)
         scaler.update()
-        del gr, gf
-
         elapsed_time = time.time() - start_time
+        
+        del gr, gf
         return float(loss.detach()), elapsed_time, float(orth.detach())
 
     return process_batch

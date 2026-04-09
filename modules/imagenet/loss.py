@@ -2,6 +2,8 @@ import torch
 import dit
 
 DIFFUSION_ = dit.load_diffusion(1000)
+sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device="cuda", dtype=torch.float32)
+sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device="cuda", dtype=torch.float32)
 
 def loss(
     model,
@@ -46,3 +48,20 @@ def loss(
     # if weight_fn is not None:
     #     per_example = per_example * weight_fn(t).to(per_example)
     return losses["loss"].mean()
+
+
+
+
+def loss_pure(model, vae, device, img, label):
+    t = torch.randint(0, 1000, (img.shape[0],), device=device, dtype=torch.long)
+
+    with torch.no_grad():
+        z = vae.encode(img).latent_dist.sample().mul_(0.18215)
+        
+    noise = torch.randn_like(z)
+
+    a = sqrt_alphas_cumprod[t].view(img.shape[0], 1, 1, 1)
+    b = sqrt_one_minus_alphas_cumprod[t].view(img.shape[0], 1, 1, 1)
+    # x_t = a * z + b * noise
+
+    return torch.mean((model(a * z + b * noise, t, label) - noise) ** 2)
