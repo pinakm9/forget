@@ -7,6 +7,10 @@ import viz
 import torch.utils.checkpoint as _cp
 import save as sv
 from torch.cuda.amp import autocast, GradScaler
+import dit
+
+
+DIFFUSION_ = dit.load_diffusion(1000)
 
 def get_processor(model, vae, diffusion, device, optim, trainable_params):
     device = vae.device
@@ -14,14 +18,33 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
     AMP_DTYPE = torch.bfloat16 if cap_major >= 8 else torch.float16   # A100/L4 → bf16, T4/V100 → fp16
     AMP_ENABLED = torch.cuda.is_available()
     scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
+    sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device=device, dtype=torch.float32)
+    sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device=device, dtype=torch.float32)
     def process_batch(img_r, label_r, img_f, label_f):
         start_time =  time.time()
         optim.zero_grad(set_to_none=True)
         # ----- forward in mixed precision -----
         with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
-            loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
-            loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
-            loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
+            # loss_1 = ls.loss(model, vae, diffusion, device, img_r, label_f)
+            # loss_r = ls.loss(model, vae, diffusion, device, img_r, label_r)
+            # loss_f = ls.loss(model, vae, diffusion, device, img_f, label_f)
+            t = torch.randint(0, 1000, (img_r.shape[0],), device=device, dtype=torch.long)
+
+            with torch.no_grad():
+                zr = vae.encode(img_r).latent_dist.sample().mul_(0.18215)
+                zf = vae.encode(img_f).latent_dist.sample().mul_(0.18215)
+                
+            noise_r = torch.randn_like(zr)
+            noise_f = torch.randn_like(zf)
+
+            a = sqrt_alphas_cumprod[t].view(img_r.shape[0], 1, 1, 1)
+            b = sqrt_one_minus_alphas_cumprod[t].view(img_r.shape[0], 1, 1, 1)
+            xr_t = a * zr + b * noise_r
+            xf_t = a * zf + b * noise_f
+
+            loss_1 = torch.mean((model(xr_t, t, label_f)[:, :noise_r.shape[1]] - noise_r) ** 2)
+            loss_r = torch.mean((model(xr_t, t, label_r)[:, :noise_r.shape[1]] - noise_r) ** 2)
+            loss_f = torch.mean((model(xf_t, t, label_f)[:, :noise_f.shape[1]] - noise_f) ** 2)
 
         gf = torch.cat([g.reshape(-1) for g in torch.autograd.grad(outputs=loss_f,
                                                                    inputs=trainable_params,
