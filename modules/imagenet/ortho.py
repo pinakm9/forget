@@ -12,21 +12,44 @@ import gc
 import save as sv
 import generate as gn
 
+DIFFUSION_ = dit.load_diffusion(1000)
+
 def get_processor(model, vae, diffusion, device, optim, trainable_params, orthogonality_weight):
     device = vae.device
     cap_major = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0
     AMP_DTYPE = torch.bfloat16 if cap_major >= 8 else torch.float16   # A100/L4 → bf16, T4/V100 → fp16
     AMP_ENABLED = torch.cuda.is_available()
     scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
+    scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
+    sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device=device, dtype=torch.float32)
+    sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device=device, dtype=torch.float32)
     def process_batch(img_r, label_r, img_f, label_f):
         start_time = time.time()
         optim.zero_grad(set_to_none=True)
 
         # ----- forward in mixed precision -----
         with autocast(enabled=AMP_ENABLED, dtype=AMP_DTYPE):
-            loss_1 = ls.loss_pure(model, vae, diffusion, device, img_r, label_f)
-            loss_r = ls.loss_pure(model, vae, diffusion, device, img_r, label_r)
-            loss_f = ls.loss_pure(model, vae, diffusion, device, img_f, label_f)
+            # loss_1 = ls.loss_pure(model, vae, diffusion, device, img_r, label_f)
+            # loss_r = ls.loss_pure(model, vae, diffusion, device, img_r, label_r)
+            # loss_f = ls.loss_pure(model, vae, diffusion, device, img_f, label_f)
+            t = torch.randint(0, 1000, (img_r.shape[0],), device=device, dtype=torch.long)
+
+            with torch.no_grad():
+                zr = vae.encode(img_r).latent_dist.sample().mul_(0.18215)
+                zf = vae.encode(img_f).latent_dist.sample().mul_(0.18215)
+                
+            noise_r = torch.randn_like(zr)
+            noise_f = torch.randn_like(zf)
+
+            a = sqrt_alphas_cumprod[t].view(img_r.shape[0], 1, 1, 1)
+            b = sqrt_one_minus_alphas_cumprod[t].view(img_r.shape[0], 1, 1, 1)
+            xr_t = a * zr + b * noise_r
+            xf_t = a * zf + b * noise_f
+
+            loss_1 = torch.mean((model(xr_t, t, label_f)[:, :noise_r.shape[1]] - noise_r) ** 2)
+            loss_r = torch.mean((model(xr_t, t, label_r)[:, :noise_r.shape[1]] - noise_r) ** 2)
+            loss_f = torch.mean((model(xf_t, t, label_f)[:, :noise_f.shape[1]] - noise_f) ** 2)
+
 
         # ----- higher-order grads (build graph) -----
         # These grads are w.r.t. trainable_params; keep graph for the final backward.

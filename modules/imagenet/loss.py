@@ -52,7 +52,7 @@ def loss(
 
 
 
-def loss_pure(model, vae, device, img, label):
+def loss_pure(model, vae, diffusion, device, img, label):
     t = torch.randint(0, 1000, (img.shape[0],), device=device, dtype=torch.long)
 
     with torch.no_grad():
