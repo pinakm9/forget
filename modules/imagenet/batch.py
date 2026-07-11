@@ -15,13 +15,11 @@ import save as sv
 import dit
 import gc
 from cleanfid import fid
-from typing import Tuple, Callable, Optional
-from cleanfid import fid
+from typing import Callable, List, Optional, Tuple
 from cleanfid.features import build_feature_extractor
 import imagenet_maps as imap
 import random
 from pathlib import Path
-from typing import List, Tuple
 import torchvision.io as io
 import torchvision.transforms.functional as TF
 from torchvision.io import ImageReadMode
@@ -295,7 +293,17 @@ class BatchExperiment:
 
     
     @ut.timer
-    def fid(self, real_img_folder, n_samples, json_path, batch_size, **gen_kwargs):
+    def fid(
+        self,
+        real_img_folder,
+        n_samples,
+        json_path,
+        batch_size,
+        generation_batch_size=None,
+        clear_cuda_cache=False,
+        feature_mode="clean",
+        **gen_kwargs,
+    ):
         """
         Calculate the Fréchet Inception Distance (FID) for all experiments in the folder.
 
@@ -303,10 +311,14 @@ class BatchExperiment:
         ----------
         n_samples : int
             Number of samples to use for FID computation.
-        device : str or torch.device
-            Device to use for computation. If str, it will be converted to a torch.device.
-        batch_size : int, optional
-            Batch size for loading data. Defaults to 256.
+        batch_size : int
+            Batch size for Inception feature extraction.
+        generation_batch_size : int, optional
+            Maximum number of generated images retained before feature extraction.
+            Defaults to ``batch_size``.
+        clear_cuda_cache : bool, optional
+            Clear PyTorch's CUDA allocator cache after each experiment. This is
+            normally slower and should only be enabled when memory is constrained.
 
         Returns
         -------
@@ -314,40 +326,87 @@ class BatchExperiment:
 
         Notes
         -----
-        The function iterates over each experiment, computes the FID score using real images and generated images
-        from the folder, and saves the results to a CSV file. If a CUDA device is used, it clears the cache after
-        each experiment to free up memory. The function is decorated with @ut.timer, so it will print out the 
-        time taken for execution.
+        Reference statistics and the Inception extractor are shared across all
+        experiments. Generated images are processed in chunks and discarded as
+        soon as their features have been extracted.
         """
-        self.set_models()
-        device = self.vae.device
-        if isinstance(device, str):
-            device = torch.device(device)
+        if n_samples < 2:
+            raise ValueError("n_samples must be at least 2 to compute FID")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
 
-        real_imgs, names = load_random_images_torch(real_img_folder, n_samples)
-        real_imgs = real_imgs.to(device)
-        labels = [imap.w2i(w.split('/')[-1].split('_')[0], json_path) for w in names]
-        labels = torch.tensor(labels, device=device)
-       
-        self.gen_kwargs["n_samples"] = n_samples
-        self.gen_kwargs["batch_size"] = batch_size
-        
-        # Prepare to collect FID scores
+        self.set_models()
+        device = torch.device(self.vae.device)
+        generation_batch_size = generation_batch_size or batch_size
+        if generation_batch_size <= 0:
+            raise ValueError("generation_batch_size must be positive")
+
+        if device.type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            self.model.to(memory_format=torch.channels_last)
+            self.vae.to(memory_format=torch.channels_last)
+        self.model.eval()
+        self.vae.eval()
+
+        # Keep the large reference set on CPU as uint8 (4x less memory than
+        # float32) and compute its Inception features only once.
+        real_imgs, names = load_random_images_torch(
+            real_img_folder, n_samples, as_uint8=True
+        )
+        labels = [
+            imap.w2i(Path(name).name.split('_')[0], json_path)
+            for name in names
+        ]
+        labels = torch.tensor(labels, device=device, dtype=torch.long)
+
+        effective_gen_kwargs = dict(self.gen_kwargs)
+        effective_gen_kwargs.update(gen_kwargs)
+        effective_gen_kwargs.setdefault("n_steps", 10)
+        effective_gen_kwargs.setdefault("guidance_scale", 2.0)
+
+        feature_extractor = build_feature_extractor(
+            mode=feature_mode, device=str(device)
+        )
+        real_features = extract_cleanfid_features(
+            real_imgs,
+            feature_extractor,
+            batch_size=batch_size,
+            device=str(device),
+            mode=feature_mode,
+            desc="Real images: ",
+        )
+        del real_imgs
+        real_statistics = feature_statistics(real_features)
+        del real_features
+
         results = [("expr-id", "FID")]
         for i in range(self.n_exprs):
             folder = self.get_folder(i)
             try:
-                fid_score = self.compute_fid_from_folder(real_imgs, labels, folder, batch_size, **gen_kwargs)
-            except:
+                fid_score = self.compute_fid_from_folder(
+                    real_statistics,
+                    labels,
+                    folder,
+                    batch_size,
+                    feature_extractor=feature_extractor,
+                    generation_batch_size=generation_batch_size,
+                    feature_mode=feature_mode,
+                    clear_cuda_cache=clear_cuda_cache,
+                    **effective_gen_kwargs,
+                )
+            except Exception as error:
+                tqdm.write(f"FID failed for expr-{i}: {error}")
                 fid_score = np.nan
-            results.append((i, fid_score))  # collect result
-            if device.type == 'cuda':
-                torch.cuda.empty_cache()
-        
-        # Write to CSV
+            results.append((i, fid_score))
+
         with open(self.train_kwargs['folder'] + '/fid.csv', mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerows(results)
+
+        del real_statistics, feature_extractor, labels
+        if device.type == "cuda" and clear_cuda_cache:
+            torch.cuda.empty_cache()
         self.del_model()
     
     
@@ -411,18 +470,31 @@ class BatchExperiment:
 
 
     @ut.timer
-    def compute_fid_from_folder(self, real_images, labels, folder, batch_size, **gen_kwargs):
+    def compute_fid_from_folder(
+        self,
+        real_statistics,
+        labels,
+        folder,
+        batch_size,
+        feature_extractor,
+        generation_batch_size=None,
+        feature_mode="clean",
+        clear_cuda_cache=False,
+        **gen_kwargs,
+    ):
         """
         Computes the Fréchet Inception Distance (FID) for the latest checkpoint in a given folder.
 
         Parameters
         ----------
-        real_images : torch.Tensor
-            A batch of real images for which to compute the FID.
+        real_statistics : tuple[numpy.ndarray, numpy.ndarray]
+            Cached mean and covariance of the real-image Inception features.
+        labels : torch.Tensor
+            ImageNet class labels used for conditional generation.
         folder : str
             The path to the folder containing checkpoints of the model.
-        batch_size : int, optional
-            The number of images to process at once for feature extraction. Default is 256.
+        batch_size : int
+            The number of images to process at once for feature extraction.
 
         Returns
         -------
@@ -442,7 +514,8 @@ class BatchExperiment:
         generated images. The function is decorated with @ut.timer to measure execution time.
         """
 
-        device = real_images.device
+        device = torch.device(self.vae.device)
+        generation_batch_size = generation_batch_size or batch_size
       
         # Find the latest checkpoint
         checkpoints = glob.glob(os.path.join(folder, 'checkpoints', '*.pth'))
@@ -452,22 +525,59 @@ class BatchExperiment:
         def extract_int(path):
             return int(os.path.basename(path).split('_')[-1].split('.')[0])
         
-        checkpoints.sort(key=extract_int)
-        checkpoint = checkpoints[-1]
+        checkpoint = max(checkpoints, key=extract_int)
 
         # Load model
         sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
         
-        # Generate images
-        gen_images = gn.generate(self.model, self.vae, labels, n_steps=gen_kwargs['n_steps'],\
-                                  device=str(device), guidance_scale=gen_kwargs['guidance_scale'])
+        self.model.eval()
+        generated_features = []
+        base_seed = int(gen_kwargs.get("seed", 42))
+        microbatch_size = int(gen_kwargs.get("microbatch_size", 64))
 
-        # Compute FID from tensors
-        fid_score = fid_tt(real_images, gen_images, batch_size=batch_size, device=str(device))
-        del gen_images
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f"[{identifier}] FID: {fid_score:.2f}")
+        # Generate only a bounded number of decoded images at once and convert
+        # each chunk immediately to Inception features.
+        for start in tqdm(
+            range(0, labels.shape[0], generation_batch_size),
+            desc=f"Generating {Path(folder).name}",
+        ):
+            end = min(start + generation_batch_size, labels.shape[0])
+            labels_chunk = labels[start:end]
+            gen_images = gn.generate(
+                self.model,
+                self.vae,
+                labels_chunk,
+                n_steps=int(gen_kwargs["n_steps"]),
+                device=str(device),
+                guidance_scale=float(gen_kwargs["guidance_scale"]),
+                seed=base_seed + start,
+                microbatch_size=min(microbatch_size, end - start),
+            )
+            generated_features.append(
+                extract_cleanfid_features(
+                    gen_images,
+                    feature_extractor,
+                    batch_size=min(batch_size, end - start),
+                    device=str(device),
+                    mode=feature_mode,
+                    desc=None,
+                    verbose=False,
+                )
+            )
+            del gen_images
+
+        generated_features = np.concatenate(generated_features, axis=0)
+        generated_statistics = feature_statistics(generated_features)
+        del generated_features
+        fid_score = fid.frechet_distance(
+            real_statistics[0],
+            real_statistics[1],
+            generated_statistics[0],
+            generated_statistics[1],
+        )
+        del generated_statistics
+        if device.type == "cuda" and clear_cuda_cache:
+            torch.cuda.empty_cache()
         return fid_score
 
 
@@ -781,9 +891,13 @@ def make_cleanfid_model_gen_from_tensor(
     value_range: Tuple[float, float] = (0.0, 1.0),
 ):
     assert imgs.ndim == 4 and imgs.shape[1] in (1, 3), "imgs must be (N,C,H,W)"
-    x = imgs.detach().cpu()
-    x = (x * 0.5 + 0.5).clamp(0, 1) if value_range == (-1, 1) else x.clamp(0, 1)
-    x = (x * 255.0).round().to(torch.uint8)  # (N,C,H,W)
+    x = imgs.detach()
+    if x.dtype != torch.uint8:
+        x = (x * 0.5 + 0.5).clamp(0, 1) if value_range == (-1, 1) else x.clamp(0, 1)
+        x = (x * 255.0).round().to(torch.uint8)
+    # Quantize on the source device first so CUDA-to-CPU transfer volume is 4x
+    # smaller than transferring float32 images.
+    x = x.cpu().contiguous()
     N = x.shape[0]; state = {"i": 0}
 
     def gen(z_batch):
@@ -797,6 +911,42 @@ def make_cleanfid_model_gen_from_tensor(
         return batch  # torch.uint8, NCHW
 
     return gen, N
+
+
+def extract_cleanfid_features(
+    imgs: torch.Tensor,
+    feature_extractor,
+    batch_size: int = 256,
+    device: str = "cuda",
+    value_range: Tuple[float, float] = (0, 1),
+    mode: str = "clean",
+    transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    desc: Optional[str] = None,
+    verbose: bool = True,
+):
+    """Extract CleanFID features without rebuilding the Inception model."""
+    model_gen, n_images = make_cleanfid_model_gen_from_tensor(
+        imgs, value_range=value_range
+    )
+    kwargs = {
+        "model": feature_extractor,
+        "mode": mode,
+        "num_gen": n_images,
+        "batch_size": min(batch_size, n_images),
+        "device": str(device),
+        # CleanFID exposes this argument with the misspelling below.
+        "custom_image_tranform": transform,
+        "verbose": verbose,
+    }
+    if desc is not None:
+        kwargs["desc"] = desc
+    return fid.get_model_features(model_gen, **kwargs)
+
+
+def feature_statistics(features: np.ndarray):
+    """Return the feature mean and unbiased covariance used by FID."""
+    return np.mean(features, axis=0), np.cov(features, rowvar=False)
+
 
 def fid_tt(
     real: torch.Tensor,
@@ -844,7 +994,8 @@ def fid_tt(
 
 
 
-def load_random_images_torch(folder: str, n: int, size: int = 256, progress: bool = True
+def load_random_images_torch(folder: str, n: int, size: int = 256, progress: bool = True,
+                             as_uint8: bool = False
                             ) -> Tuple[torch.Tensor, List[str]]:
     """
     Load exactly n random RGB images into a tensor (n, 3, size, size) using torchvision.
@@ -879,5 +1030,7 @@ def load_random_images_torch(folder: str, n: int, size: int = 256, progress: boo
     if len(imgs) < n:
         raise ValueError(f"Could only load {len(imgs)} valid RGB images out of {n} requested.")
 
-    batch = torch.stack(imgs).float().div_(255.0)  # (n,3,H,W), range [0,1]
+    batch = torch.stack(imgs)
+    if not as_uint8:
+        batch = batch.float().div_(255.0)  # (n,3,H,W), range [0,1]
     return batch, kept_paths

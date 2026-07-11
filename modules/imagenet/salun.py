@@ -50,8 +50,10 @@ def _grad_scaler(enabled):
 
 @torch.no_grad()
 def _encode_images(vae, images):
-    """Encode ImageNet images using the same latent convention as train.py."""
-    return vae.encode(images).latent_dist.sample().mul_(LATENT_SCALE)
+    """Encode with the frozen VAE in FP32, independent of DiT autocast."""
+    with torch.autocast(device_type=images.device.type, enabled=False):
+        latents = vae.encode(images.float()).latent_dist.sample()
+    return latents.float().mul_(LATENT_SCALE)
 
 
 def _wrapped_model(diffusion, model):
@@ -387,7 +389,9 @@ def _record_salun_config(
     mask_sparsity,
     mask_max_batches,
     alternative_classes,
-    use_amp,
+    mask_use_amp,
+    train_use_amp,
+    mask_seed,
     keep_all,
 ):
     """Augment train.py's config with the SALUN-specific hyperparameters."""
@@ -412,9 +416,17 @@ def _record_salun_config(
         "value": mask_max_batches,
         "description": "Forget batches used for the fixed saliency mask.",
     }
-    training["salun_use_amp"] = {
-        "value": bool(use_amp),
-        "description": "Whether mixed precision is enabled on CUDA.",
+    training["salun_mask_use_amp"] = {
+        "value": bool(mask_use_amp),
+        "description": "Whether mask gradients use mixed precision on CUDA.",
+    }
+    training["salun_train_use_amp"] = {
+        "value": bool(train_use_amp),
+        "description": "Whether unlearning updates use mixed precision on CUDA.",
+    }
+    training["salun_mask_seed"] = {
+        "value": mask_seed,
+        "description": "Isolated RNG seed used while constructing the mask.",
     }
     experiment["salun_alternative_classes"] = {
         "value": list(alternative_classes),
@@ -453,7 +465,10 @@ def train(
     unfreeze_last=False,
     unfreeze_x_embedder=False,
     keep_all=False,
-    use_amp=True,
+    mask_use_amp=False,
+    train_use_amp=True,
+    mask_seed=0,
+    use_amp=None,
     max_grad_norm=None,
     save_mask=True,
     **gen_kwargs,
@@ -466,6 +481,8 @@ def train(
     the default preserves the repository's memory-efficient DiT interaction.
     ``diffusion_steps`` defaults to the full 1000-step training schedule; sample
     generation remains controlled independently by ``n_steps`` in gen_kwargs.
+    ``use_amp`` is a backwards-compatible alias that, when explicitly passed,
+    overrides both ``mask_use_amp`` and ``train_use_amp``.
     """
     if retain_weight < 0:
         raise ValueError("retain_weight (beta) must be non-negative")
@@ -484,6 +501,9 @@ def train(
         raise ValueError("alternative_classes must contain a non-forget class")
     if any(class_id < 0 or class_id >= 1000 for class_id in alternative_classes):
         raise ValueError("alternative_classes must be ImageNet classes in [0, 999]")
+    if use_amp is not None:
+        mask_use_amp = bool(use_amp)
+        train_use_amp = bool(use_amp)
 
     gen_kwargs.setdefault("n_steps", 10)
     gen_kwargs.setdefault("guidance_scale", 2.0)
@@ -542,7 +562,9 @@ def train(
         mask_sparsity,
         mask_max_batches,
         alternative_classes,
-        use_amp,
+        mask_use_amp,
+        train_use_amp,
+        mask_seed,
         keep_all,
     )
 
@@ -550,17 +572,35 @@ def train(
     # and unlearning backward passes used here.
     tt.patch_checkpoint_nonreentrant()
 
-    mask, gamma, selected_fraction = compute_salun_mask(
-        model,
-        vae,
-        diffusion,
-        dataloader["forget"],
-        optimizer,
-        device,
-        sparsity=mask_sparsity,
-        max_batches=mask_max_batches,
-        use_amp=use_amp,
+    mask_device = torch.device(device)
+    cuda_devices = []
+    if mask_device.type == "cuda":
+        cuda_devices = [
+            mask_device.index
+            if mask_device.index is not None
+            else torch.cuda.current_device()
+        ]
+    rng_context = (
+        torch.random.fork_rng(devices=cuda_devices)
+        if mask_seed is not None
+        else nullcontext()
     )
+    with rng_context:
+        if mask_seed is not None:
+            torch.manual_seed(int(mask_seed))
+            if mask_device.type == "cuda":
+                torch.cuda.manual_seed(int(mask_seed))
+        mask, gamma, selected_fraction = compute_salun_mask(
+            model,
+            vae,
+            diffusion,
+            dataloader["forget"],
+            optimizer,
+            device,
+            sparsity=mask_sparsity,
+            max_batches=mask_max_batches,
+            use_amp=mask_use_amp,
+        )
     tqdm.write(
         f"SALUN mask threshold={gamma:.6g}, "
         f"selected={selected_fraction:.2%}"
@@ -586,7 +626,7 @@ def train(
         alternative_classes,
         retain_weight=retain_weight,
         max_grad_norm=max_grad_norm,
-        use_amp=use_amp,
+        use_amp=train_use_amp,
     )
     log_results = tt.get_logger(
         model,
