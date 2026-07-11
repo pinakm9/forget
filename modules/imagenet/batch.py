@@ -20,6 +20,7 @@ from cleanfid.features import build_feature_extractor
 import imagenet_maps as imap
 import random
 from pathlib import Path
+from PIL import Image
 import torchvision.io as io
 import torchvision.transforms.functional as TF
 from torchvision.io import ImageReadMode
@@ -994,41 +995,86 @@ def fid_tt(
 
 
 
-def load_random_images_torch(folder: str, n: int, size: int = 256, progress: bool = True,
-                             as_uint8: bool = False
-                            ) -> Tuple[torch.Tensor, List[str]]:
+def load_random_images_torch(
+    folder: str,
+    n: int,
+    size: int = 256,
+    progress: bool = True,
+    as_uint8: bool = False,
+) -> Tuple[torch.Tensor, List[str]]:
     """
-    Load exactly n random RGB images into a tensor (n, 3, size, size) using torchvision.
-    Ignores images that don't have 3 channels.
+    Load exactly n images as RGB tensors with torchvision and a Pillow fallback.
+
+    Grayscale, palette, CMYK, and RGBA inputs are converted to RGB rather than
+    silently discarded.
     """
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    files = [p for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in exts]
+    files = [
+        path
+        for path in Path(folder).rglob("*")
+        if path.is_file() and path.suffix.lower() in exts
+    ]
     if not files:
         raise ValueError(f"No images found in {folder}")
+    if n > len(files):
+        raise ValueError(
+            f"Requested {n} images, but only {len(files)} supported image files "
+            f"were found in {folder}."
+        )
 
     random.shuffle(files)
 
     imgs: List[torch.Tensor] = []
     kept_paths: List[str] = []
+    decode_failures: List[str] = []
 
     pbar = tqdm(total=n, desc="Loading images", disable=not progress)
     for fp in files:
         if len(imgs) == n:  #  stop as soon as we hit n
             break
         try:
-            img = io.read_image(str(fp), mode=ImageReadMode.UNCHANGED)  # (C,H,W)
-            if img.shape[0] != 3:  # skip grayscale or RGBA
+            # RGB mode converts grayscale/RGBA inputs instead of rejecting them.
+            img = io.read_image(str(fp), mode=ImageReadMode.RGB)
+        except Exception as torchvision_error:
+            try:
+                # Pillow supports some JPEG/PNG variants absent from a given
+                # torchvision build (for example, CMYK JPEGs).
+                with Image.open(fp) as pil_image:
+                    img = TF.pil_to_tensor(pil_image.convert("RGB"))
+            except Exception as pillow_error:
+                decode_failures.append(
+                    f"{fp.name}: torchvision={torchvision_error}; "
+                    f"Pillow={pillow_error}"
+                )
                 continue
+
+        try:
+            if img.dtype != torch.uint8:
+                # FID consumes quantized [0, 255] images. Convert uncommon
+                # higher-bit-depth decoder outputs to the same representation.
+                if img.is_floating_point():
+                    scale = 255.0 if img.numel() and img.max().item() <= 1.0 else 1.0
+                    img = img.mul(scale).round().clamp_(0, 255).to(torch.uint8)
+                else:
+                    max_value = float(torch.iinfo(img.dtype).max)
+                    img = img.float().mul_(255.0 / max_value).round_().to(torch.uint8)
             img = TF.resize(img, [size, size], interpolation=TF.InterpolationMode.BICUBIC)
             imgs.append(img)
             kept_paths.append(str(fp))
             pbar.update(1)
-        except Exception:
+        except Exception as processing_error:
+            decode_failures.append(f"{fp.name}: processing={processing_error}")
             continue
     pbar.close()
 
     if len(imgs) < n:
-        raise ValueError(f"Could only load {len(imgs)} valid RGB images out of {n} requested.")
+        examples = "\n".join(decode_failures[:5])
+        detail = f" First failures:\n{examples}" if examples else ""
+        raise ValueError(
+            f"Could only load {len(imgs)} images out of {n} requested from "
+            f"{len(files)} supported files; {len(decode_failures)} files failed "
+            f"decoding or processing.{detail}"
+        )
 
     batch = torch.stack(imgs)
     if not as_uint8:
