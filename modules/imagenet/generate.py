@@ -3,7 +3,7 @@ import os, torch
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler 
 import utility as ut 
 
-@torch.no_grad()
+@torch.inference_mode()
 def generate(
     model,
     vae,
@@ -15,7 +15,8 @@ def generate(
     prediction_type: str = "epsilon",
     vae_scaling: float = 0.18215,  # SD-style scaling for 256x256 (4x32x32 latents)
     microbatch_size: int = 64,     # A100 can usually take 16–64 at 256^2; tune per VRAM
-    amp_dtype: torch.dtype | None = None   # None => pick bfloat16 if supported else float16
+    amp_dtype: torch.dtype | None = None,  # None => pick bfloat16 if supported else float16
+    return_uint8: bool = False,
 ):
     """
     Optimized sampler for A100:
@@ -25,7 +26,8 @@ def generate(
       - channels_last
       - classifier-free guidance via single forward per step (concat trick)
       - VAE decode under autocast on GPU
-    Returns: float32 images in [0,1], shape [B,3,H,W].
+    Returns images with shape [B,3,H,W]. By default they are float32 in [0,1];
+    ``return_uint8=True`` returns quantized [0,255] tensors for FID extraction.
     """
 
     B_total = class_labels.shape[0]
@@ -55,6 +57,7 @@ def generate(
         bs  = end - start
         labels_mb = class_labels[start:end].to(device, non_blocking=True)
         null_labels = torch.full_like(labels_mb, fill_value=1000)
+        labels_cat = torch.cat([null_labels, labels_mb], dim=0)
 
         # fixed per-sample seeds
         gen = torch.Generator(device=device).manual_seed(seed + start)
@@ -62,18 +65,15 @@ def generate(
         # Init latent noise (4x32x32 for 256x256 with SD-style VAE)
         x = torch.randn(bs, 4, 32, 32, generator=gen, device=device, dtype=amp_dtype)
 
-        # Pre-allocate timestep tensor (+ doubled for CFG concat)
-        t_batch = torch.empty(bs, dtype=torch.long, device=device)
+        # Pre-allocate the doubled timestep tensor used by CFG.
         t_batch2 = torch.empty(bs * 2, dtype=torch.long, device=device)
 
         # Diffusion loop with CFG "concat trick": one forward per step
-        with torch.autocast(device_type="cuda", dtype=amp_dtype):
+        with torch.autocast(device_type=device.type, dtype=amp_dtype):
             for t in timesteps:
-                t_batch.fill_(t)
                 # concat [uncond, cond]
                 x_in = torch.cat([x, x], dim=0)
-                labels_cat = torch.cat([null_labels, labels_mb], dim=0)
-                t_batch2[:bs] = t_batch; t_batch2[bs:] = t_batch
+                t_batch2.fill_(t)
 
                 # Model forward once
                 eps = model(x_in, t_batch2, labels_cat)
@@ -91,11 +91,13 @@ def generate(
 
             # Decode latents -> [0,1]
             z = x / vae_scaling
-            imgs = vae.decode(z).sample[:B_total]
+            imgs = vae.decode(z).sample
             imgs = (imgs.clamp(-1, 1) + 1) / 2
 
-        # Cast to float32 for downstream code
-        outs.append(imgs.to(dtype=torch.float32))
+        if return_uint8:
+            outs.append(imgs.mul(255.0).round_().to(torch.uint8))
+        else:
+            outs.append(imgs.to(dtype=torch.float32))
 
         # housekeeping
         del x, z, imgs

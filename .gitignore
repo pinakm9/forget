@@ -28,4 +28,4 @@ notebooks/talk/mnist/*
 practice/pretrained_models/*
 practice/*/
 !practice/*
-
+/UNO/

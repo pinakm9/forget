@@ -303,6 +303,8 @@ class BatchExperiment:
         generation_batch_size=None,
         clear_cuda_cache=False,
         feature_mode="clean",
+        compile_model=False,
+        compile_mode="reduce-overhead",
         **gen_kwargs,
     ):
         """
@@ -320,6 +322,9 @@ class BatchExperiment:
         clear_cuda_cache : bool, optional
             Clear PyTorch's CUDA allocator cache after each experiment. This is
             normally slower and should only be enabled when memory is constrained.
+        compile_model : bool, optional
+            Compile the DiT sampling graph once and reuse it across experiments.
+            This has a startup cost but can improve long FID runs on CUDA.
 
         Returns
         -------
@@ -394,6 +399,8 @@ class BatchExperiment:
                     generation_batch_size=generation_batch_size,
                     feature_mode=feature_mode,
                     clear_cuda_cache=clear_cuda_cache,
+                    compile_model=compile_model,
+                    compile_mode=compile_mode,
                     **effective_gen_kwargs,
                 )
             except Exception as error:
@@ -406,6 +413,8 @@ class BatchExperiment:
             writer.writerows(results)
 
         del real_statistics, feature_extractor, labels
+        if hasattr(self, "_fid_compiled_model"):
+            del self._fid_compiled_model
         if device.type == "cuda" and clear_cuda_cache:
             torch.cuda.empty_cache()
         self.del_model()
@@ -481,6 +490,8 @@ class BatchExperiment:
         generation_batch_size=None,
         feature_mode="clean",
         clear_cuda_cache=False,
+        compile_model=False,
+        compile_mode="reduce-overhead",
         **gen_kwargs,
     ):
         """
@@ -532,6 +543,19 @@ class BatchExperiment:
         sv.apply_trainable_checkpoint(self.model, checkpoint, map_location=device)
         
         self.model.eval()
+        sampling_model = self.model
+        if compile_model:
+            if device.type != "cuda":
+                raise ValueError("compile_model is only supported for CUDA FID runs")
+            if not hasattr(self, "_fid_compiled_model"):
+                tqdm.write(
+                    "Compiling DiT sampling graph; the first batch will be slower..."
+                )
+                self._fid_compiled_model = torch.compile(
+                    self.model, mode=compile_mode, fullgraph=False
+                )
+            sampling_model = self._fid_compiled_model
+
         generated_features = []
         base_seed = int(gen_kwargs.get("seed", 42))
         microbatch_size = int(gen_kwargs.get("microbatch_size", 64))
@@ -545,7 +569,7 @@ class BatchExperiment:
             end = min(start + generation_batch_size, labels.shape[0])
             labels_chunk = labels[start:end]
             gen_images = gn.generate(
-                self.model,
+                sampling_model,
                 self.vae,
                 labels_chunk,
                 n_steps=int(gen_kwargs["n_steps"]),
@@ -553,6 +577,8 @@ class BatchExperiment:
                 guidance_scale=float(gen_kwargs["guidance_scale"]),
                 seed=base_seed + start,
                 microbatch_size=min(microbatch_size, end - start),
+                amp_dtype=gen_kwargs.get("amp_dtype"),
+                return_uint8=True,
             )
             generated_features.append(
                 extract_cleanfid_features(

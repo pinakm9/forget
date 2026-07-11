@@ -248,7 +248,16 @@ class DiT(nn.Module):
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
         for block in self.blocks:
-            x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
+            # Activation checkpointing saves memory during training, but adds
+            # needless Python/recomputation bookkeeping during sampling. Keep
+            # it whenever gradients are required (including SalUn's eval-mode
+            # saliency pass), and bypass it for no-grad/inference generation.
+            if torch.is_grad_enabled():
+                x = torch.utils.checkpoint.checkpoint(
+                    self.ckpt_wrapper(block), x, c
+                )
+            else:
+                x = block(x, c)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
