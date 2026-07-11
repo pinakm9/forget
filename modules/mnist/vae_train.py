@@ -346,7 +346,7 @@ def get_collector(sample_dir, collect_interval, grid_size, img_ext='jpg'):
 
 def init(model='./vae.pth', folder='.', num_steps=100, batch_size=100, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10, kl_weight=1.,\
         uniformity_weight=1e4, orthogonality_weight=10., forget_weight=None, all_digits=None, forget_digit=None, img_ext='jpg',\
-        classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", train_mode='original', data_path='../../data/MNIST'):
+        classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", train_mode='original', data_path='../../data/MNIST', learning_rate=1e-3):
     """
     Initializes all components for VAE training on MNIST digits.
 
@@ -434,7 +434,7 @@ def init(model='./vae.pth', folder='.', num_steps=100, batch_size=100, latent_di
     dataloader['retain'] = dataloader_retain
     dataloader['forget'] = dataloader_forget
     net = init_model(model, latent_dim, device)
-    optim = torch.optim.Adam(net.parameters())
+    optim = torch.optim.Adam(net.parameters(), lr=learning_rate)
     z_random = torch.randn((batch_size, latent_dim)).to(device)
     epoch_length = len(dataloader['original']) if train_mode == 'original' else min(len(dataloader['forget']), len(dataloader['retain']))
     epochs = int(np.ceil(num_steps/epoch_length))

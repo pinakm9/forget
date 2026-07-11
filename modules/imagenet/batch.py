@@ -213,11 +213,14 @@ class BatchExperiment:
 
         summary["Time/Step"] = summary["Time"] + 0.
         summary["Time"] *= summary["Step"]
+        summary["10-step remainder"], summary_std["10-step remainder"] = mean["1 Fraction"][10], std["1 Fraction"][10]
+        summary["5-step remainder"], summary_std["5-step remainder"] = mean["1 Fraction"][5], std["1 Fraction"][5]
 
         summary_std["Time/Step"] = summary_std["Time"] + 0.
         summary_std["Time"] = np.sqrt(summary["Step"]**2 * summary_std["Time/Step"] **2 +\
                                       summary["Time/Step"] **2 * summary_std["Step"] **2 +\
                                       summary_std["Step"] **2 * summary_std["Time/Step"] **2)
+          
         
         for filename, payload in (("summary.json", summary), ("summary_std.json", summary_std)):
             path = f"{self.train_kwargs['folder']}/{filename}"

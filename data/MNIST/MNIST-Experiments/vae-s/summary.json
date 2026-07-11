@@ -20,5 +20,7 @@
   "9 Fraction": 0.13984375,
   "FID": 23.036873054504394,
   "Time/Step": 0.007072159074387412,
-  "Original FID": 20.673234939575195
+  "Original FID": 20.673234939575195,
+  "10-step remainder": 0.0375,
+  "5-step remainder": 0.0484375
 }

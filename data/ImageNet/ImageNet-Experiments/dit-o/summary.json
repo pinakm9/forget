@@ -6,5 +6,8 @@
   "1 Fraction": 0.030000000000000006,
   "Orthogonality Loss": 0.15566349886357783,
   "FID": 11.845353195168226,
-  "Time/Step": 1.8172892343997955
+  "Time/Step": 1.8172892343997955,
+  "Final forget fraction": 0.0,
+  "10-step remainder": 0.0,
+  "5-step remainder": 0.0
 }

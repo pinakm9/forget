@@ -2,8 +2,23 @@ import torch
 import dit
 
 DIFFUSION_ = dit.load_diffusion(1000)
-sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device="cuda", dtype=torch.float32)
-sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device="cuda", dtype=torch.float32)
+try:
+    sqrt_alphas_cumprod = torch.tensor(
+        DIFFUSION_.sqrt_alphas_cumprod,
+        device="cuda",
+        dtype=torch.float32
+    )
+    sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device="cuda", dtype=torch.float32)
+except Exception:
+    sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device="mps" if torch.backends.mps.is_available() else "cpu", dtype=torch.float32)
+
+    sqrt_alphas_cumprod = torch.tensor(
+        DIFFUSION_.sqrt_alphas_cumprod,
+        device="mps" if torch.backends.mps.is_available() else "cpu",
+        dtype=torch.float32
+    )
+# sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device="cuda", dtype=torch.float32)
+# sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device="cuda", dtype=torch.float32)
 
 def loss(
     model,
