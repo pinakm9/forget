@@ -109,7 +109,7 @@ def salun_generation_loss(
     alternative_labels,
     retain_images,
     retain_labels,
-    retain_weight=1.0,
+    retain_weight=1e-3,
 ):
     """Eq. (7): misaligned-condition MSE plus beta times retain MSE.
 
@@ -266,22 +266,6 @@ def compute_salun_mask(
     return mask, gamma.item(), selected / total
 
 
-def _sample_alternative_labels(forget_labels, alternative_classes):
-    choices = torch.as_tensor(
-        alternative_classes,
-        device=forget_labels.device,
-        dtype=torch.long,
-    )
-    if choices.numel() == 0:
-        raise ValueError("At least one alternative class is required")
-    if torch.isin(forget_labels, choices).any():
-        raise ValueError("Alternative classes must exclude the forget class")
-    indices = torch.randint(
-        choices.numel(), (forget_labels.shape[0],), device=forget_labels.device
-    )
-    return choices[indices]
-
-
 def get_processor(
     model,
     vae,
@@ -289,8 +273,7 @@ def get_processor(
     optimizer,
     mask,
     device,
-    alternative_classes,
-    retain_weight=1.0,
+    retain_weight=1e-3,
     max_grad_norm=None,
     use_amp=True,
 ):
@@ -316,9 +299,15 @@ def get_processor(
         forget_labels = forget_labels.to(
             device, non_blocking=True, dtype=torch.long
         )
-        alternative_labels = _sample_alternative_labels(
-            forget_labels, alternative_classes
-        )
+        if retain_labels.shape != forget_labels.shape:
+            raise ValueError(
+                "Retain and forget batches must have the same label shape so "
+                "retain_labels can be used as c-prime"
+            )
+        # Pair each forget example with the condition of the corresponding
+        # retain example. The ImageNet loaders use drop_last=True, so their
+        # batch shapes normally match exactly.
+        alternative_labels = retain_labels
 
         with _autocast(device, amp_enabled, amp_dtype):
             total_loss, forget_loss, retain_loss = salun_generation_loss(
@@ -388,7 +377,6 @@ def _record_salun_config(
     retain_weight,
     mask_sparsity,
     mask_max_batches,
-    alternative_classes,
     mask_use_amp,
     train_use_amp,
     mask_seed,
@@ -428,9 +416,9 @@ def _record_salun_config(
         "value": mask_seed,
         "description": "Isolated RNG seed used while constructing the mask.",
     }
-    experiment["salun_alternative_classes"] = {
-        "value": list(alternative_classes),
-        "description": "Misaligned c-prime classes used for forget examples.",
+    experiment["salun_alternative_label_source"] = {
+        "value": "paired_retain_labels",
+        "description": "Use the paired retain batch labels as c-prime.",
     }
     experiment["salun_full_model_mask"] = {
         "value": bool(keep_all),
@@ -449,7 +437,7 @@ def train(
     collect_interval="epoch",
     log_interval=10,
     learning_rate=1e-4,
-    retain_weight=1.0,
+    retain_weight=1e-3,
     mask_sparsity=0.5,
     mask_max_batches=None,
     alternative_classes=None,
@@ -475,9 +463,9 @@ def train(
 ):
     """Run paper-style SalUn on ImageNet DiT-XL/2.
 
-    ``exchange_classes`` supplies D_r in this repository's experiment setup.
-    ``alternative_classes`` supplies c'; by default the same retained classes
-    are used. For the paper's full-model saliency domain, set ``keep_all=True``;
+    ``exchange_classes`` supplies D_r in this repository's experiment setup,
+    and each paired retain label is used directly as c'. For the paper's
+    full-model saliency domain, set ``keep_all=True``;
     the default preserves the repository's memory-efficient DiT interaction.
     ``diffusion_steps`` defaults to the full 1000-step training schedule; sample
     generation remains controlled independently by ``n_steps`` in gen_kwargs.
@@ -486,21 +474,23 @@ def train(
     """
     if retain_weight < 0:
         raise ValueError("retain_weight (beta) must be non-negative")
+    if alternative_classes is not None:
+        tqdm.write(
+            "SALUN: alternative_classes is ignored; paired retain_labels "
+            "are always used as c-prime."
+        )
     if not exchange_classes:
         raise ValueError("exchange_classes must provide retained data")
     if not 0 <= int(forget_class) < 1000:
         raise ValueError("forget_class must be an ImageNet class in [0, 999]")
-    if alternative_classes is None:
-        alternative_classes = tuple(exchange_classes)
-    alternative_classes = tuple(
-        int(class_id)
-        for class_id in alternative_classes
-        if int(class_id) != int(forget_class)
-    )
-    if not alternative_classes:
-        raise ValueError("alternative_classes must contain a non-forget class")
-    if any(class_id < 0 or class_id >= 1000 for class_id in alternative_classes):
-        raise ValueError("alternative_classes must be ImageNet classes in [0, 999]")
+    retain_classes = tuple(int(class_id) for class_id in exchange_classes)
+    if any(class_id < 0 or class_id >= 1000 for class_id in retain_classes):
+        raise ValueError("exchange_classes must be ImageNet classes in [0, 999]")
+    if int(forget_class) in retain_classes:
+        raise ValueError(
+            "exchange_classes must exclude forget_class because retain_labels "
+            "are used as the alternative condition"
+        )
     if use_amp is not None:
         mask_use_amp = bool(use_amp)
         train_use_amp = bool(use_amp)
@@ -561,7 +551,6 @@ def train(
         retain_weight,
         mask_sparsity,
         mask_max_batches,
-        alternative_classes,
         mask_use_amp,
         train_use_amp,
         mask_seed,
@@ -623,7 +612,6 @@ def train(
         optimizer,
         mask,
         device,
-        alternative_classes,
         retain_weight=retain_weight,
         max_grad_norm=max_grad_norm,
         use_amp=train_use_amp,
