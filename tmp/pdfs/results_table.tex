@@ -1,0 +1,54 @@
+\documentclass[10pt]{article}
+\usepackage[paperwidth=8.5in,paperheight=11in,margin=0.45in]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{pifont}
+\usepackage{ifthen}
+\usepackage{caption}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\renewcommand{\cite}[1]{%
+  \ifthenelse{\equal{#1}{moon2024feature}}{Moon et al. (2024)}{Gandikota et al. (2023)}%
+}
+
+\begin{document}
+\begingroup
+\setlength{\tabcolsep}{1.8pt}
+\begin{table}[htp]
+\caption{Performance of various algorithms for class/feature unlearning with VAEs on MNIST and CelebA and diffusion transformers on ImageNet-1K. Each experiment is repeated $10$ times, and the standard deviations are shown in parentheses. FID values are calculated using $25,000$ samples for MNIST and CelebA and $22,000$ samples for ImageNet-1K. {\color{red}\ding{55}} indicates that the generated samples after unlearning are unrecognizably different from the original model. Bold indicates the best score among instances with acceptable FID. {\color{green!60!black}\ding{51}} indicates the generated samples after unlearning are perceptually indistinguishable from the original model in terms of visual fidelity. An asterisk (*) denotes cases where the algorithm failed to reach the target fraction of forget samples in the generated images within the allotted training steps. We only report on (A) and (A-D) for MNIST since they demonstrate catastrophic forgetting in all cases; for CelebA (A) and (A-D) result in NaN for FID, generating white images. The original models for MNIST, CelebA and ImageNet-1K have FID $20.7$, $166.3$ and $12.7$ respectively, and we are unlearning the digit $1$, faces identified as ``male'' and images of class $207$ (golden retriever) respectively.}
+{\scriptsize
+\label{tab:res}
+\vspace{0.5em}
+\centering
+\begin{tabular}{@{}ll@{\hspace{-1em}}c@{\hspace{-0.5em}}c@{\hspace{-0.2em}}c@{\hspace{-0.5em}}c@{}}
+\toprule
+\textbf{Dataset} & \textbf{Algorithm} & \hspace{-1em}Time to unlearn (s) $\downarrow$ & FID $\downarrow$ & $\Delta t$ (ms) & $5$-step f-ratio $\downarrow$\\
+\midrule
+\multirow{5}{*}{\shortstack{MNIST}}
+  & Gradient Ascent (A) & \textbf{0.024} (0.004) & 612.3 (4.9) {\color{red}\ding{55}} & 5.1 (0.47) & 0.00 (0.01)\\
+  & Ascent descent (A-D) & 0.025 (0.006) & 266.9 (19.3) {\color{red}\ding{55}} & 5.1 (0.09) & 0.01 (0.01)\\
+  & Gradient surgery (S) & 1.016 (0.907) & 23.0 (0.2) {\color{green!60!black}\ding{51}} & 7.1 (0.06) & 0.05 (0.03)\\
+  & UNO & 0.055 (0.009) & \textbf{21.8} (0.2) {\color{green!60!black}\ding{51}} & 20.5 (0.27) & \textbf{0.00} (0.00)\\
+  & UNO-S & 0.041 (0.010) & 21.8 (0.4) {\color{green!60!black}\ding{51}} & 15.1 (0.35) & \textbf{0.00} (0.00)\\
+  & \cite{moon2024feature} & 0.065 (0.052) & 25.1 (0.4) {\color{green!60!black}\ding{51}} & 5.3 (0.04) & 0.03 (0.02)\\
+\midrule
+\multirow{3}{*}{\shortstack{CelebA}}
+  & Gradient surgery (S) & 10.750$^*$ (3.362) & 176.0 (3.7) {\color{green!60!black}\ding{51}} & 18.3 (0.18) & 0.11 (0.05)\\
+  & UNO & 0.527 (0.003) & 174.3 (1.6) {\color{green!60!black}\ding{51}} & 175.7 (0.91) & \textbf{0.00} (0.00)\\
+  & UNO-S & \textbf{0.283} (0.040) & 177.1 (4.7) {\color{green!60!black}\ding{51}} & 101.0 (0.35) & \textbf{0.00} (0.00)\\
+  & \cite{moon2024feature} & 7.827 (3.683) & \textbf{172.9} (0.8) {\color{green!60!black}\ding{51}} & 15.4 (0.04) & 0.14 (0.03)\\
+\midrule
+\multirow{3}{*}{\shortstack{ImageNet-1K}}
+  & Gradient surgery (S) & 7.622 (2.211) & 12.3 (0.8) {\color{green!60!black}\ding{51}} & 712.4 (8.99) & 0.70 (0.28)\\
+  & UNO & 6.361 (0.909) & 11.8 (0.8) {\color{green!60!black}\ding{51}} & 1817.3 (4.59) & \textbf{0.00} (0.00)\\
+  & UNO-S & 6.495 (1.928) & 12.0 (0.8) {\color{green!60!black}\ding{51}} & 1273.4 (8.04) & 0.07 (0.12)\\
+  & ESD-u-1~\cite{gandikota2023erasing} & 6.600 (1.299) & \textbf{11.6} (0.6) {\color{green!60!black}\ding{51}} & 362.6 (4.96) & 0.63 (0.20)\\
+  & ESD-u-3~\cite{gandikota2023erasing} & \textbf{2.023} (0.677) & 13.1 (1.0) {\color{green!60!black}\ding{51}} & 348.8 (5.64) & 0.14 (0.10)\\
+  & SalUn & 4.411 (0.766) & 242.2 (3.2) {\color{green!60!black}\ding{51}} & 711.4 (3.36) & 0.13 (0.09)\\
+\bottomrule
+\end{tabular}
+\vspace{1.5em}}
+\end{table}
+\endgroup
+\end{document}
