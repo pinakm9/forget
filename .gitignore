@@ -29,3 +29,5 @@ practice/pretrained_models/*
 practice/*/
 !practice/*
 /UNO/
+*.ipynb
+.ipynb_checkpoints/
