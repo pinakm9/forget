@@ -286,6 +286,8 @@ def get_processor(
         if parameter.requires_grad
     ]
 
+    @tt.profile_gpu_memory
+
     def process_batch(retain_images, retain_labels, forget_images, forget_labels):
         start_time = time.time()
         model.eval()  # Keep c and c' from being replaced by the null condition.
@@ -428,6 +430,7 @@ def _record_salun_config(
         json.dump(config, file, indent=4)
 
 
+@tt.collect_memory_usage
 def train(
     model_path,
     folder,

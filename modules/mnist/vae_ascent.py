@@ -36,6 +36,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
     function: A function that takes a batch of images to retain and forget, and returns the reconstruction loss, 
               KL divergence, uniformity loss, orthogonality measure, generated image, logits, and elapsed time.
     """
+    @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
         kl_weight, uniformity_weight = weights
         
@@ -98,6 +99,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
 
 
 
+@ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=0., all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):

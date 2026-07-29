@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 
 sys.path.append(os.path.abspath('../modules'))
+import utility as ut
 import vae_loss as vl
 import vae_ortho as vo
 import vae_train as vt
@@ -125,6 +126,8 @@ def get_processor(
 
     net.train()
     _freeze_batchnorm_stats(net)
+
+    @ut.profile_gpu_memory
 
     def process_batch(real_img_retain, real_img_forget):
         time_0 = time.time()
@@ -295,6 +298,7 @@ def _next_batch(loader, iterator):
         return next(iterator), iterator
 
 
+@ut.collect_memory_usage
 def train(
     model,
     folder,

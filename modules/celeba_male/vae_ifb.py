@@ -18,6 +18,7 @@ import classifier as cl
 
 def get_processor(net, old_net, z_e, trainable_params, identifier, z_random, weights, optim, all_classes, forget_class):
     device = next(net.parameters()).device
+    @ut.profile_gpu_memory
     def process_batch():
         
         # real_img_retain = net.encode(z)
@@ -88,6 +89,7 @@ def get_processor(net, old_net, z_e, trainable_params, identifier, z_random, wei
 
 
 
+@ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, all_classes=[0, 1], forget_class=1,\
           img_ext='jpg', classifier_path="../../data/CelebA/cnn/cnn_10.pth",  data_path="../../data/CelebA/dataset", max_data=None, **viz_kwargs):

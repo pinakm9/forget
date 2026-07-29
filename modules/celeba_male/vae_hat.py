@@ -39,6 +39,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
               KL divergence, uniformity loss, orthogonality measure, generated image, logits, and elapsed time.
     """
     classes = all_classes
+    @ut.profile_gpu_memory
     def process_batch(img_retain, img_forget):
         kl_weight, orthogonality_weight, uniformity_weight, forget_weight = weights
 
@@ -79,6 +80,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
 
 
 
+@ut.collect_memory_usage
 def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_dim=512, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, orthogonality_weight=0., forget_weight=0., all_classes=[0, 1], forget_class=1,\
           img_ext='jpg', classifier_path="../../data/CelebA/cnn/cnn_10.pth",  data_path="../../data/CelebA/dataset", max_data=None, **viz_kwargs):    

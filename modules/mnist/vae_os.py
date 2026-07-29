@@ -17,6 +17,7 @@ import classifier as cl
 
 
 
+@ut.collect_memory_usage
 def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, orthogonality_weight=1e5, forget_weight=0., all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):

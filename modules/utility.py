@@ -7,6 +7,8 @@ import numpy as np
 import platform
 import cv2, re
 
+from gpu_memory import collect_memory_usage, profile_gpu_memory
+
 
 
 def timer(func):
@@ -417,4 +419,3 @@ def summary_csv(summary_paths, summary_std_paths, labels, out_csv_path):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-

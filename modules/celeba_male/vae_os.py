@@ -17,6 +17,7 @@ import classifier as cl
 
 
 
+@ut.collect_memory_usage
 def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_dim=512, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, orthogonality_weight=1e5, forget_weight=0., all_classes=[0, 1], forget_class=1,\
           img_ext='jpg', classifier_path="../../data/CelebA/cnn/cnn_10.pth",  data_path="../../data/CelebA/dataset", max_data=None, **viz_kwargs):

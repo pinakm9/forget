@@ -1,4 +1,4 @@
-import json, time, csv, os
+import json, time, csv, os, sys
 import dit
 import torch
 import loss as ls
@@ -12,6 +12,12 @@ import viz
 import torch.utils.checkpoint as _cp
 import gc
 import generate as gn
+
+_MODULES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _MODULES_DIR not in sys.path:
+    sys.path.insert(0, _MODULES_DIR)
+
+from gpu_memory import collect_memory_usage, profile_gpu_memory
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
                 uniformity_weight=None, forget_weight=None, learning_rate=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
@@ -158,6 +164,7 @@ def get_processor(model, vae, diffusion, device, optim):
     amp = (device.type == "cuda")
     scaler = torch.cuda.amp.GradScaler(enabled=amp)
     # @ut.timer
+    @profile_gpu_memory
     def process_batch(real_img, label):
         # Forward pass
         start_time =  time.time()
@@ -392,6 +399,7 @@ def free_gpu_memory(device):
         
 
 
+@collect_memory_usage
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
           imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\

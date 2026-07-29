@@ -33,6 +33,7 @@ def get_processor_ascent(net, trainable_params, identifier, z_random, weights, o
         all_digits: all the digits in the dataset
         forget_digit: the digit to be forgotten
     """
+    @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
         kl_weight, uniformity_weight = weights
         
@@ -95,6 +96,7 @@ def get_processor_ascent(net, trainable_params, identifier, z_random, weights, o
 
 
 def get_processor_descent(net, trainable_params, identifier, z_random, weights, optim, all_digits, forget_digit):
+    @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
         """
         Computes gradients of the loss with respect to the parameters of the VAE and performs a gradient descent step.
@@ -176,6 +178,7 @@ def get_processor_descent(net, trainable_params, identifier, z_random, weights, 
 
 
 
+@ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):

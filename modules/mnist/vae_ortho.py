@@ -38,6 +38,7 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
               KL divergence, uniformity loss, orthogonality measure, generated image, logits, and elapsed time.
     """
     digits = all_digits
+    @ut.profile_gpu_memory
     def process_batch(img_retain, img_forget):
         kl_weight, orthogonality_weight, uniformity_weight, forget_weight = weights
         img_forget = img_forget.view(img_forget.shape[0], -1).to(net.device)
@@ -99,6 +100,7 @@ def get_logger(identifier, csv_file, log_interval):
     return log_results
 
 
+@ut.collect_memory_usage
 def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, orthogonality_weight=1e5, forget_weight=0., all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):    

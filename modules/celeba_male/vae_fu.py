@@ -324,6 +324,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     """
 
     # @ut.timer
+    @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
         kl_weight, uniformity_weight = weights
         
@@ -351,6 +352,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
 
 
 
+@ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=0., all_classes=[0, 1], forget_class=1,\
           img_ext='jpg', classifier_path="../../data/CelebA/cnn/cnn_10.pth",  data_path="../../data/CelebA/dataset", max_data=None, **viz_kwargs):

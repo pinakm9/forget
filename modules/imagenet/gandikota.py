@@ -22,6 +22,8 @@ def get_processor(model, vae, teacher, device, optim):
     sqrt_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_alphas_cumprod, device=device, dtype=torch.float32)
     sqrt_one_minus_alphas_cumprod = torch.tensor(DIFFUSION_.sqrt_one_minus_alphas_cumprod, device=device, dtype=torch.float32)
     eta = 1.0
+
+    @tt.profile_gpu_memory
     
     def process_batch(img_f, label_f):
         start_time =  time.time()
@@ -63,6 +65,7 @@ def get_processor(model, vae, teacher, device, optim):
 
 
 
+@tt.collect_memory_usage
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
           imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\
@@ -171,7 +174,6 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             break
     sv.save_trainable_checkpoint(model, f"{checkpoint_dir}/DiT_step_{global_step}.pth")
     viz.summarize_training(folder)
-
 
 
 

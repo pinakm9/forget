@@ -14,6 +14,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
     AMP_DTYPE = torch.bfloat16 if cap_major >= 8 else torch.float16   # A100/L4 → bf16, T4/V100 → fp16
     AMP_ENABLED = torch.cuda.is_available()
     scaler = GradScaler(enabled=(AMP_ENABLED and AMP_DTYPE is torch.float16))
+    @tt.profile_gpu_memory
     def process_batch(img_r, label_r, img_f, label_f):
         start_time =  time.time()
         optim.zero_grad(set_to_none=True)
@@ -58,6 +59,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
 
 
 
+@tt.collect_memory_usage
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
           uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
           imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\

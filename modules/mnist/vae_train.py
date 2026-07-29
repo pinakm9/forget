@@ -216,6 +216,7 @@ def get_processor(net, identifier, z_random, weights, optim, all_digits, forget_
                   KL divergence, uniformity loss, generated image, logits, and elapsed time.
     """
     digits = all_digits
+    @ut.profile_gpu_memory
     def process_batch(real_img):
         """
         Perform a forward + backward pass on a single batch, returning the individual loss terms.
@@ -478,6 +479,7 @@ def init(model='./vae.pth', folder='.', num_steps=100, batch_size=100, latent_di
 
 
 
+@ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
           kl_weight=1., uniformity_weight=1e4, all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST'):
