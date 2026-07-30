@@ -78,7 +78,7 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
               log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
               forget_weight=forget_weight, all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext, classifier_path=classifier_path,\
               train_mode='orthogonal-surgery', data_path=data_path)
-    process_batch_odd = vo.get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, uniformity_weight, orthogonality_weight, forget_weight), optim, all_digits, forget_digit)    
+    process_batch_odd = vo.get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, orthogonality_weight, uniformity_weight, forget_weight), optim, all_digits, forget_digit)
     process_batch_even = vs.get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, uniformity_weight), optim, all_digits, forget_digit)
     log_results = vo.get_logger(identifier, csv_file, log_interval)
     save = vt.get_saver(net, save_steps, checkpoint_dir, epoch_length)
@@ -103,8 +103,6 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
             collect_samples(generated_img, step=global_step)
     viz_kwargs.update({"folder": folder})
     viz.summarize_training(**viz_kwargs) 
-
-
 
 
 

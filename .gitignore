@@ -30,3 +30,4 @@ practice/*/
 !practice/*
 /UNO/
 .ipynb_checkpoints/
+data/models/*

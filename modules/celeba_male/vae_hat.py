@@ -141,7 +141,7 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
               log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
               forget_weight=forget_weight, all_classes=all_classes, forget_class=forget_class, img_ext=img_ext, classifier_path=classifier_path,\
               train_mode='uniformity', data_path=data_path, max_data=max_data)
-    process_batch = get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, uniformity_weight, orthogonality_weight, forget_weight), optim, all_classes, forget_class)    
+    process_batch = get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, orthogonality_weight, uniformity_weight, forget_weight), optim, all_classes, forget_class)
     log_results = vo.get_logger(identifier, csv_file, log_interval)
     save = vt.get_saver(net, save_steps, checkpoint_dir, epoch_length)
     collect_samples = vt.get_collector(sample_dir, collect_interval, grid_size, img_ext)   
