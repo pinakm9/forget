@@ -297,7 +297,7 @@ def L_full(g, f, z, z_e, v_unit, delta, alpha):
 
 
 
-def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_classes, forget_class, latent_dim, device):
+def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, optim, all_classes, forget_class, latent_dim, device):
     """
     Returns a function that processes a batch of images through a VAE network and computes the necessary gradients.
 
@@ -313,7 +313,6 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     z_e (torch.tensor): Feature direction.
     v_unit (torch.tensor): Unit vector along the feature direction.
     delta (float): Threshold.
-    weights (tuple): Contains weights for KL divergence and uniformity loss.
     optim (torch.optim.Optimizer): Optimizer for the VAE.
     all_classes (list): List of all class labels.
     forget_class (int): The class label to forget.
@@ -326,8 +325,6 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     # @ut.timer
     @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
-        kl_weight, uniformity_weight = weights
-        
         z = torch.randn(2*real_img_retain.shape[0], latent_dim).to(device)
         time_0 = time.time()
         optim.zero_grad()
@@ -354,7 +351,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
 
 @ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None, collect_interval='epoch', log_interval=10,\
-          kl_weight=1., uniformity_weight=0., all_classes=[0, 1], forget_class=1,\
+          kl_weight=1., all_classes=[0, 1], forget_class=1,\
           img_ext='jpg', classifier_path="../../data/CelebA/cnn/cnn_10.pth",  data_path="../../data/CelebA/dataset", max_data=None, **viz_kwargs):
     """
     Train a VAE with an additional classification loss term using the technique
@@ -379,8 +376,6 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     :type log_interval: int
     :param kl_weight: The weight of the KL loss term.
     :type kl_weight: float
-    :param uniformity_weight: The weight of the uniformity loss term.
-    :type uniformity_weight: float
     :param all_classes: The list of all classes.
     :type all_classes: list
     :param forget_class: The class to forget.
@@ -407,7 +402,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
     num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size \
     = vt.init(model, folder, num_steps, batch_size, latent_dim=latent_dim, save_steps=save_steps, collect_interval=collect_interval,\
-           log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
+           log_interval=log_interval, kl_weight=kl_weight, orthogonality_weight=0.,\
            all_classes=all_classes, forget_class=forget_class, img_ext=img_ext, classifier_path=classifier_path, train_mode='orthogonal', data_path=data_path, max_data=max_data)
     
     log_results = vo.get_logger(identifier, csv_file, log_interval)
@@ -419,7 +414,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
     v_unit = res['feature_direction_unit'].to(device)
     delta = res['delta']
 
-    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_classes, forget_class, latent_dim, device)    
+    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, optim, all_classes, forget_class, latent_dim, device)
     # ---------------------------------------------------  
     # ---------------------------------------------------
     # Main training loop
@@ -432,7 +427,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=512, save_steps=None,
             img_retain = img_retain.to(device)
             # -- Process a single batch
             rec_loss, kl_loss, unif_loss, orth_loss, generated_img, logits, elapsed_time = process_batch(img_retain, img_forget)
-            loss = None #rec_loss + kl_weight * kl_loss + uniformity_weight * unif_loss 
+            loss = None
             real_img, _ = next(iter(dataloader['original']))
             real_img = real_img.to(device)
             log_results(step=global_step, losses=[rec_loss, kl_loss, unif_loss, orth_loss, loss], elapsed_time=elapsed_time, real_img=real_img, generated_img=generated_img, logits=logits)

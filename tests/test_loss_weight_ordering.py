@@ -45,6 +45,44 @@ class LossWeightOrderingTests(unittest.TestCase):
         self.assertGreater(tuples_checked, 0)
         self.assertEqual(mismatches, [])
 
+    def test_unused_uniformity_weight_is_not_exposed(self):
+        paths = [
+            *[
+                MODULES_DIR / "imagenet" / name
+                for name in (
+                    "ascent.py",
+                    "ascent_descent.py",
+                    "gandikota.py",
+                    "ortho.py",
+                    "ortho_s.py",
+                    "salun.py",
+                    "surgery.py",
+                    "surgery_a.py",
+                    "train.py",
+                )
+            ],
+            MODULES_DIR / "celeba_male" / "vae_fu.py",
+            MODULES_DIR / "celeba_male" / "vae_ifb.py",
+            MODULES_DIR / "mnist" / "vae_fu.py",
+            MODULES_DIR / "mnist" / "vae_ret.py",
+            MODULES_DIR / "mnist" / "vae_salun.py",
+        ]
+        occurrences = []
+
+        for path in paths:
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id == "uniformity_weight":
+                    occurrences.append(
+                        f"{path.relative_to(MODULES_DIR)}:{node.lineno}"
+                    )
+                elif isinstance(node, ast.arg) and node.arg == "uniformity_weight":
+                    occurrences.append(
+                        f"{path.relative_to(MODULES_DIR)}:{node.lineno}"
+                    )
+
+        self.assertEqual(occurrences, [])
+
 
 if __name__ == "__main__":
     unittest.main()

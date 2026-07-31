@@ -530,7 +530,6 @@ def train(
         collect_interval=collect_interval,
         log_interval=log_interval,
         learning_rate=learning_rate,
-        uniformity_weight=0.0,
         orthogonality_weight=0.0,
         forget_weight=None,
         exchange_classes=list(exchange_classes),

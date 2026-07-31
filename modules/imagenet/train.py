@@ -20,7 +20,7 @@ if _MODULES_DIR not in sys.path:
 from gpu_memory import collect_memory_usage, profile_gpu_memory
 
 def write_config(model, folder, epochs, epoch_length, batch_size,  collect_interval='epoch', log_interval='epoch', orthogonality_weight=None,\
-                uniformity_weight=None, forget_weight=None, learning_rate=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
+                forget_weight=None, learning_rate=None, exchange_classes=None, forget_class=None, img_ext='JPEG'):
     sample_dir = f'{folder}/samples'    
     checkpoint_dir = f'{folder}/checkpoints'
     # At the end of the train() function, after training is complete:
@@ -88,12 +88,6 @@ def write_config(model, folder, epochs, epoch_length, batch_size,  collect_inter
         config_data["training"]["forget_weight"] = {
             "value": forget_weight,
             "description": "Weight of the forget loss."
-        }
-
-    if uniformity_weight is not None:
-        config_data["training"]["uniformity_weight"] = {
-            "value": uniformity_weight,
-            "description": "Weight of the uniformity loss."
         }
 
     if forget_class is not None:
@@ -305,7 +299,7 @@ def get_collector(sample_dir, collect_interval, grid_size, identifier, img_ext='
 
 
 def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
-        uniformity_weight=None, orthogonality_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='jpg',\
+        orthogonality_weight=None, forget_weight=None, exchange_classes=None, forget_class=None, img_ext='jpg',\
         train_mode='original', data_path='../../data/ImageNet-1k/2012', imagenet_json_path='../../data/ImageNet-1k/imagenet_class_index.json',\
         n_samples=100, device='cuda', diffusion_steps=64, freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False):
     
@@ -361,7 +355,7 @@ def init(model_path, folder='.', num_steps=100, batch_size=100, save_steps=None,
         writer.writerow(header)
     # Save config
     write_config(model=model, folder=folder, epochs=epochs, epoch_length=epoch_length, batch_size=batch_size,\
-                collect_interval=collect_interval, log_interval=log_interval, uniformity_weight=uniformity_weight,\
+                collect_interval=collect_interval, log_interval=log_interval,\
                 orthogonality_weight=orthogonality_weight, forget_weight=forget_weight, learning_rate=learning_rate,\
                 exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext)
 
@@ -401,7 +395,7 @@ def free_gpu_memory(device):
 
 @collect_memory_usage
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
-          uniformity_weight=0., exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
+          exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
           imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\
           freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False, **gen_kwargs):
     """
@@ -423,8 +417,6 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
         Interval at which to collect samples. Must be 'epoch', 'step', or None. Defaults to 'epoch'.
     log_interval : int, optional
         Interval at which to log results. Defaults to 10.
-    uniformity_weight : float, optional
-        Weight for the uniformity loss. Defaults to 0.
     exchange_classes : list, optional
         List of class indices to exchange during training. Defaults to [208].
     forget_class : int, optional
@@ -458,7 +450,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params\
     = init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval,\
-           log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=0., learning_rate=learning_rate,\
+           log_interval=log_interval, orthogonality_weight=0., learning_rate=learning_rate,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
            freeze_K=freeze_K, unfreeze_last=unfreeze_last, unfreeze_x_embedder=unfreeze_x_embedder, keep_all=keep_all)

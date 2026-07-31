@@ -61,7 +61,7 @@ def get_processor(model, vae, diffusion, device, optim, trainable_params):
 
 @tt.collect_memory_usage
 def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_interval='epoch', log_interval=10, learning_rate=1e-4,\
-          uniformity_weight=0., orthogonality_weight=None, exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
+          orthogonality_weight=None, exchange_classes=[208], forget_class=207, img_ext='jpg', data_path='../../data/ImageNet-1k/2012',\
           imagenet_json_path='../../data/ImageNet-1k/imagenet_1k.json', n_samples=100, device='cuda', diffusion_steps=64,\
           freeze_K=4, unfreeze_last=False, unfreeze_x_embedder=False, keep_all=False, **gen_kwargs):
     """
@@ -83,8 +83,6 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
         Interval at which to collect samples. Must be 'epoch', 'step', or None. Defaults to 'epoch'.
     log_interval : int, optional
         Interval at which to log results. Defaults to 10.
-    uniformity_weight : float, optional
-        Weight for the uniformity loss. Defaults to 0.
     orthogonality_weight : float, optional        
         Weight for the orthogonality loss. Defaults to 1000.
     exchange_classes : list, optional
@@ -120,7 +118,7 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
     model, vae, diffusion, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
            num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size, trainable_params \
     = tt.init(model_path, folder, num_steps, batch_size,  save_steps=save_steps, collect_interval=collect_interval, learning_rate=learning_rate,\
-           log_interval=log_interval, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
+           log_interval=log_interval, orthogonality_weight=orthogonality_weight,\
            exchange_classes=exchange_classes, forget_class=forget_class, img_ext=img_ext,  data_path=data_path, 
            imagenet_json_path=imagenet_json_path,n_samples=n_samples, device=device, diffusion_steps=diffusion_steps,
            freeze_K=freeze_K, unfreeze_last=unfreeze_last, unfreeze_x_embedder=unfreeze_x_embedder, keep_all=keep_all)
@@ -166,7 +164,6 @@ def train(model_path, folder, num_steps, batch_size, save_steps=None, collect_in
             break
     sv.save_trainable_checkpoint(model, f"{checkpoint_dir}/DiT_step_{global_step}.pth")
     viz.summarize_training(folder)
-
 
 
 

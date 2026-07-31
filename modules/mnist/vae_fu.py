@@ -300,7 +300,7 @@ def L_full(g, f, z, z_e, v_unit, delta, alpha=3.):
 
 
 
-def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, optim, all_digits, forget_digit):
+def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, optim, all_digits, forget_digit):
     """
     Returns a function that processes a batch of images through a VAE network and computes the necessary gradients.
 
@@ -316,7 +316,6 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     z_e (torch.tensor): Feature direction.
     v_unit (torch.tensor): Unit vector along the feature direction.
     delta (float): Threshold.
-    weights (tuple): Contains weights for KL divergence and uniformity loss.
     optim (torch.optim.Optimizer): Optimizer for the VAE.
     all_digits (list): List of all class labels.
     forget_digit (int): The class label to forget.
@@ -327,7 +326,6 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
     """
     @ut.profile_gpu_memory
     def process_batch(real_img_retain, real_img_forget):
-        kl_weight, uniformity_weight = weights
         z = torch.randn(2*real_img_retain.shape[0], net.latent_dim).to(net.device)
         time_0 = time.time()
         optim.zero_grad()
@@ -356,7 +354,7 @@ def get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, weights, 
 
 @ut.collect_memory_usage
 def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
-          kl_weight=1., uniformity_weight=1e4, all_digits=list(range(10)), forget_digit=1,\
+          kl_weight=1., all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):
     """
     Train the VAE on MNIST digits, with a custom loop to alternate between ascent and descent steps, using the "surgery" method to orthogonalize the gradients.
@@ -381,8 +379,6 @@ def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, c
         Interval at which to log results. Defaults to 10.
     kl_weight : float, optional
         Weight for the KL loss. Defaults to 1.
-    uniformity_weight : float, optional
-        Weight for the uniformity loss. Defaults to 1e4.
     all_digits : list, optional
         List of all digits to use. Defaults to list(range(10)).
     forget_digit : int, optional
@@ -405,7 +401,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, c
     net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
     num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size \
     = vt.init(model, folder, num_steps, batch_size, latent_dim=latent_dim, save_steps=save_steps, collect_interval=collect_interval,\
-           log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=0.,\
+           log_interval=log_interval, kl_weight=kl_weight, orthogonality_weight=0.,\
            all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext, classifier_path=classifier_path, train_mode='orthogonal', data_path=data_path)
     
     log_results = vo.get_logger(identifier, csv_file, log_interval)
@@ -417,7 +413,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, c
     v_unit = res['feature_direction_unit'].to(device)
     delta = res['delta']
 
-    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, (kl_weight, uniformity_weight), optim, all_digits, forget_digit)    
+    process_batch = get_processor(net, net0, identifier, z_random, z_e, v_unit, delta, optim, all_digits, forget_digit)
     # ---------------------------------------------------
     # Main training loop
     # ---------------------------------------------------
@@ -427,7 +423,7 @@ def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, c
             global_step += 1
             # -- Process a single batch
             rec_loss, kl_loss, unif_loss, orth_loss, generated_img, logits, elapsed_time = process_batch(img_retain, img_forget)
-            loss = None#rec_loss + kl_weight * kl_loss + uniformity_weight * unif_loss 
+            loss = None
             real_img, _ = next(iter(dataloader['original']))
             real_img = real_img.view(real_img.shape[0], -1).to(device)
             log_results(step=global_step, losses=[rec_loss, kl_loss, unif_loss, orth_loss, loss], elapsed_time=elapsed_time, real_img=real_img, generated_img=generated_img, logits=logits)
@@ -435,7 +431,5 @@ def train(model, folder, num_steps, batch_size, latent_dim=2, save_steps=None, c
             collect_samples(generated_img, step=global_step)
     viz_kwargs.update({"folder": folder})
     viz.summarize_training(**viz_kwargs) 
-
-
 
 

@@ -3,7 +3,6 @@ from tqdm import tqdm
 import numpy as np
 import os, sys, csv
 import time
-from torch.autograd import grad
 
 
 sys.path.append(os.path.abspath('../modules'))
@@ -15,20 +14,19 @@ import classifier as cl
   
 
 
-def get_processor(net, trainable_params, identifier, z_random, weights, optim, all_digits, forget_digit):
+def get_processor(net, trainable_params, identifier, z_random, kl_weight, optim, all_digits, forget_digit):
     """
     Returns a function that processes a batch of images through a VAE network and computes the necessary gradients.
 
-    This function performs a forward and backward pass on a batch of images, calculating the reconstruction loss, 
-    KL divergence, and a uniformity loss. It then adjusts the gradients to ensure orthogonality, performs an 
-    optimization step, and returns the relevant metrics.
+    This function performs a retain-only VAE update. Generated-image statistics
+    are returned for logging, but they are not part of the training objective.
 
     Parameters:
     net (nn.Module): The VAE model.
     trainable_params (list): List of parameters to optimize.
     identifier (nn.Module): The model used for logits computation.
     z_random (torch.tensor): Random latent codes for the decoder.
-    weights (tuple): Contains weights for KL divergence, uniformity loss, and orthogonality loss.
+    kl_weight (float): Weight for the retain KL-divergence term.
     optim (torch.optim.Optimizer): Optimizer for the VAE.
     all_digits (list): List of all class labels.
     forget_digit (int): The class label to forget.
@@ -37,46 +35,48 @@ def get_processor(net, trainable_params, identifier, z_random, weights, optim, a
     function: A function that takes a batch of images to retain and forget, and returns the reconstruction loss, 
               KL divergence, uniformity loss, orthogonality measure, generated image, logits, and elapsed time.
     """
-    digits = all_digits
     @ut.profile_gpu_memory
     def process_batch(img_retain, img_forget):
-        kl_weight, orthogonality_weight, uniformity_weight, forget_weight = weights
         img_forget = img_forget.view(img_forget.shape[0], -1).to(net.device)
         img_retain = img_retain.view(img_retain.shape[0], -1).to(net.device)
         
         time_0 = time.time()
 
-        reconstructed_forget, mu_forget, logvar_forget = net(img_forget)
+        # Retain the reference method's unused forget pass because its latent
+        # sampling advances the RNG before the retain pass.
+        net(img_forget)
         reconstructed_retain, mu_retain, logvar_retain = net(img_retain)
         time_1 = time.time()
 
-        generated_img = net.decoder(z_random)
-        logits = identifier(generated_img)
-        uniformity = vl.uniformity_loss_surgery(logits, all_digits=all_digits, forget_digit=forget_digit) # vl.uniformity_loss(logits, digits)
+        with torch.no_grad():
+            generated_img = net.decoder(z_random)
+            logits = identifier(generated_img)
+            uniformity = vl.uniformity_loss_surgery(
+                logits,
+                all_digits=all_digits,
+                forget_digit=forget_digit,
+            )
         time_2 = time.time()
     
-        # rec_forget = vl.reconstruction_loss(reconstructed_forget, img_forget)
         rec_retain = vl.reconstruction_loss(reconstructed_retain, img_retain)
-        # kl_forget = vl.kl_div(mu_forget, logvar_forget)
         kl_retain = vl.kl_div(mu_retain, logvar_retain)
-
-        # loss_forget = rec_forget + kl_weight * kl_forget
         loss_retain = rec_retain + kl_weight * kl_retain
-
-        # gf = torch.cat([x.view(-1) for x in grad(outputs=loss_forget + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True, create_graph=True)])
-        # gr = torch.cat([x.view(-1) for x in grad(outputs=loss_retain + uniformity_weight * uniformity, inputs=trainable_params, retain_graph=True, create_graph=True)])
-        # orth = (gf @ gr)**2 / ((gf @ gf) * (gr @ gr))
-
-        loss = loss_retain #+ orthogonality_weight * orth + uniformity_weight * uniformity
         optim.zero_grad()
-        loss.backward()
+        loss_retain.backward()
         optim.step()
         time_final = time.time() 
 
-        elapsed_time = (time_1 - time_0) + float(uniformity_weight != 0.) * (time_2 - time_1) + (time_final - time_2)
+        elapsed_time = (time_1 - time_0) + (time_final - time_2)
 
-        # return (rec_forget + rec_retain).item(), (kl_forget + kl_retain).item(),  uniformity.item(), orth.item(), generated_img, logits, elapsed_time
-        return 0, 0,  uniformity.item(), 0, generated_img, logits, elapsed_time
+        return (
+            0.0,
+            0.0,
+            uniformity.item(),
+            0.0,
+            generated_img,
+            logits,
+            elapsed_time,
+        )
 
     return process_batch
 
@@ -103,10 +103,10 @@ def get_logger(identifier, csv_file, log_interval):
 
 @ut.collect_memory_usage
 def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_dim=2, save_steps=None, collect_interval='epoch', log_interval=10,\
-          kl_weight=1., uniformity_weight=1e4, orthogonality_weight=1e5, forget_weight=0., all_digits=list(range(10)), forget_digit=1,\
+          kl_weight=1., all_digits=list(range(10)), forget_digit=1,\
           img_ext='jpg', classifier_path="../data/MNIST/classifiers/MNISTClassifier.pth", data_path='../../data/MNIST', **viz_kwargs):    
     """
-    Train an MNIST VAE with an additional loss term for orthogonal representation.
+    Retrain an MNIST VAE using only retain reconstruction and KL losses.
 
     Parameters
     ----------
@@ -130,12 +130,6 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
         Interval at which to log the results. Default is 10.
     kl_weight : float, optional
         Weight of the KL loss. Default is 1.
-    uniformity_weight : float, optional
-        Weight of the uniformity loss. Default is 1e4.
-    orthogonality_weight : float, optional
-        Weight of the orthogonality loss. Default is 1e5.
-    forget_weight : float, optional
-        Weight of the forget loss. Default is 0.
     all_digits : list, optional
         List of all digits. Default is [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].
     forget_digit : int, optional
@@ -159,10 +153,10 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
     net, dataloader, optim, z_random, identifier, sample_dir, checkpoint_dir, epoch_length, epochs,\
     num_steps, save_steps, collect_interval, log_interval, csv_file, device, grid_size \
     = vt.init(model, folder, num_steps, batch_size, latent_dim=latent_dim, save_steps=save_steps, collect_interval=collect_interval,\
-              log_interval=log_interval, kl_weight=kl_weight, uniformity_weight=uniformity_weight, orthogonality_weight=orthogonality_weight,\
-              forget_weight=forget_weight, all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext, classifier_path=classifier_path,\
+              log_interval=log_interval, kl_weight=kl_weight,\
+              all_digits=all_digits, forget_digit=forget_digit, img_ext=img_ext, classifier_path=classifier_path,\
               train_mode='orthogonal', data_path=data_path)
-    process_batch = get_processor(net, ut.get_trainable_params(net), identifier, z_random, (kl_weight, orthogonality_weight, uniformity_weight, forget_weight), optim, all_digits, forget_digit)
+    process_batch = get_processor(net, ut.get_trainable_params(net), identifier, z_random, kl_weight, optim, all_digits, forget_digit)
     log_results = get_logger(identifier, csv_file, log_interval)
     save = vt.get_saver(net, save_steps, checkpoint_dir, epoch_length)
     collect_samples = vt.get_collector(sample_dir, collect_interval, grid_size, img_ext)   
@@ -175,7 +169,7 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
             global_step += 1
             # -- Process a single batch
             rec_loss, kl_loss, unif_loss, orth_loss, generated_img, logits, elapsed_time = process_batch(img_retain, img_forget)
-            loss = rec_loss + kl_weight * kl_loss + uniformity_weight * unif_loss + orthogonality_weight * orth_loss
+            loss = rec_loss + kl_weight * kl_loss
             real_img, _ = next(iter(dataloader['original']))
             real_img = real_img.view(real_img.shape[0], -1).to(device)
             log_results(step=global_step, losses=[rec_loss, kl_loss, unif_loss, orth_loss, loss], elapsed_time=elapsed_time, real_img=real_img, generated_img=generated_img, logits=logits)
@@ -183,9 +177,6 @@ def train(model='./vae.pth', folder='/.', num_steps=100, batch_size=100, latent_
             collect_samples(generated_img, step=global_step)
     viz_kwargs.update({"folder": folder})
     viz.summarize_training(**viz_kwargs) 
-
-
-
 
 
 

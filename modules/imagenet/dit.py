@@ -9,8 +9,14 @@ from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 HERE = os.path.dirname(os.path.abspath(__file__))               # .../forget/modules/imagenet
 FAST_DIT = os.path.abspath(os.path.join(HERE, '..', 'fast-DiT'))# .../forget/modules/fast-DiT
 
-if FAST_DIT not in sys.path:
-    sys.path.insert(0, FAST_DIT)
+# Keep ImageNet modules ahead of fast-DiT. Both directories contain a
+# top-level ``train.py``; putting fast-DiT first makes UNO's ``import train``
+# resolve to the unrelated reference training script.
+if FAST_DIT in sys.path:
+    sys.path.remove(FAST_DIT)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+sys.path.insert(sys.path.index(HERE) + 1, FAST_DIT)
 
 from models import DiT_models
 from diffusion import create_diffusion  # diffusion scheduler/factory
@@ -420,7 +426,6 @@ def encode_to_latents(
     # Scale to match training convention
     return latents * vae_scaling_factor
     
-
 
 
 

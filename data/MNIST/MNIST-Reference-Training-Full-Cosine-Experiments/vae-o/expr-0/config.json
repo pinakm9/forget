@@ -37,7 +37,7 @@
             "description": "Weight of the forget loss."
         },
         "uniformity_weight": {
-            "value": 0.0,
+            "value": 1000.0,
             "description": "Weight of the uniformity loss."
         }
     },
